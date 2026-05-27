@@ -1,7 +1,7 @@
 {
   "processing": {
-    "quality": "best",
-    "mupdf_aggression": "dd",
+    "quality": "fast",
+    "mupdf_aggression": "dddd",
     "min_size_mb": 0,
     "preserve_signature": true,
     "no_backup": true,

@@ -140,25 +140,68 @@ def validate_pdf(input_path: Path) -> Tuple[bool, str]:
 # 5. ФУНКЦИИ ОБРАБОТКИ
 # ==============================================================================
 
-def get_pdf_files(root_dir: str, min_size_mb: int) -> List[Path]:
+def get_pdf_files(root_dir: str, min_size_mb: int, 
+                  year: Optional[int] = None, month: Optional[int] = None) -> List[Path]:
     pdf_files = []
     root_path = Path(root_dir).resolve()
     min_size_bytes = min_size_mb * 1024 * 1024
 
     logger.info(f"Сканирование: {root_path}")
     logger.info(f"Минимальный размер: {min_size_mb} МБ")
+    
+    if year is not None and month is not None:
+        logger.info(f"Период: {year}-{month:02d}")
+    elif year is not None:
+        logger.info(f"Год: {year}")
 
     try:
-        for path in root_path.rglob("*.pdf"):
-            if path.is_file():
-                try:
-                    size = path.stat().st_size
-                    if path.name.startswith(DEFAULT_TEMP_PREFIX) or path.suffix == ".bak":
+        # Сначала находим папки с периодом (YYYY-MM)
+        period_dirs = []
+        for item in root_path.iterdir():
+            if item.is_dir() and item.name.count('-') == 1:
+                parts = item.name.split('-')
+                if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+                    dir_year = int(parts[0])
+                    dir_month = int(parts[1])
+                    
+                    # Фильтрация по году и месяцу
+                    if year is not None and dir_year != year:
                         continue
-                    if size > min_size_bytes:
-                        pdf_files.append(path)
-                except OSError as e:
-                    logger.debug(f"Ошибка доступа {path}: {e}")
+                    if month is not None and dir_month != month:
+                        continue
+                    
+                    period_dirs.append(item)
+                    logger.debug(f"Добавлена папка периода: {item.name}")
+        
+        if period_dirs:
+            logger.info(f"Найдено папок периода: {len(period_dirs)}")
+            # Сканируем только выбранные папки периода
+            for period_dir in period_dirs:
+                for path in period_dir.rglob("*.pdf"):
+                    if path.is_file():
+                        try:
+                            size = path.stat().st_size
+                            if path.name.startswith(DEFAULT_TEMP_PREFIX) or path.suffix == ".bak":
+                                continue
+                            if size > min_size_bytes:
+                                pdf_files.append(path)
+                        except OSError as e:
+                            logger.debug(f"Ошибка доступа {path}: {e}")
+        else:
+            # Если папок периода не найдено или фильтр не задан, сканируем как раньше
+            if year is not None or month is not None:
+                logger.warning("Папки с указанным периодом не найдены")
+            else:
+                for path in root_path.rglob("*.pdf"):
+                    if path.is_file():
+                        try:
+                            size = path.stat().st_size
+                            if path.name.startswith(DEFAULT_TEMP_PREFIX) or path.suffix == ".bak":
+                                continue
+                            if size > min_size_bytes:
+                                pdf_files.append(path)
+                        except OSError as e:
+                            logger.debug(f"Ошибка доступа {path}: {e}")
     except Exception as e:
         logger.error(f"Ошибка сканирования: {e}")
 
@@ -414,6 +457,8 @@ def main():
   %(prog)s "C:\\Documents" --dry-run --min-size 0
   %(prog)s "C:\\Documents" --no-backup --min-size 0
   %(prog)s "C:\\Documents" --preserve-signature --keep-bak
+  %(prog)s "C:\\Documents" --year 2016 --month 12
+  %(prog)s "C:\\Documents" --year 2017 --dry-run
         """
     )
     parser.add_argument("path", help="Путь к корневой директории")
@@ -437,8 +482,17 @@ def main():
                         help="Не удалять электронные подписи")
     parser.add_argument("--no-backup", action="store_true",
                         help="Не создавать .bak файлы (не рекомендуется для медицины)")
+    parser.add_argument("--year", type=int, default=None,
+                        help="Год периода (формат YYYY, например 2016)")
+    parser.add_argument("--month", type=int, default=None, choices=range(1, 13),
+                        help="Месяц периода (1-12, например 12)")
 
     args = parser.parse_args()
+    
+    # Валидация: месяц без года не имеет смысла
+    if args.month is not None and args.year is None:
+        logger.error("⚠️  Ошибка: --month требует указания --year")
+        sys.exit(1)
 
     # Предупреждение об удалении электронной подписи
     if not args.preserve_signature:
@@ -494,7 +548,7 @@ def main():
         logger.info("  → Движок: pikepdf + MuPDF (макс.)")
         logger.info("  → Сжатие: 85-92%")
 
-    files = get_pdf_files(args.path, args.min_size)
+    files = get_pdf_files(args.path, args.min_size, args.year, args.month)
 
     if not files:
         logger.info("Файлов для обработки не найдено.")

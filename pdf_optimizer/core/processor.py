@@ -209,14 +209,14 @@ def clean_with_pikepdf(input_path: Path, output_path: Path,
 
 
 def rebuild_with_mupdf(input_path: Path, output_path: Path,
-                       aggression: str = "dd") -> bool:
+                       aggression: str = "gggg") -> bool:
     """
     Пересборка PDF с помощью MuPDF
     
     Args:
         input_path: Входной файл
         output_path: Выходной файл
-        aggression: Уровень агрессии сжатия
+        aggression: Уровень сборки мусора (g/gg/ggg/gggg)
         
     Returns:
         True если успешно
@@ -224,9 +224,9 @@ def rebuild_with_mupdf(input_path: Path, output_path: Path,
     args = [
         "mutool",
         "clean",
-        f"-{aggression}",
-        "-l",
-        "-f",
+        f"-{aggression}",  # Garbage collection level
+        "-z",              # Deflate streams (сжатие)
+        "-f",              # Compress fonts
         str(input_path),
         str(output_path)
     ]
@@ -338,8 +338,13 @@ def process_file(file_path: Path, mode: str, mupdf_aggression: str,
         
         # Этап 2: Пересборка MuPDF
         if mode in ["better", "best"]:
-            if not rebuild_with_mupdf(cleaned_path, processed_path, mupdf_aggression):
-                logger.warning(f"MuPDF не справился, используем pikepdf: {file_path.name}")
+            if rebuild_with_mupdf(cleaned_path, processed_path, mupdf_aggression):
+                # ПРОВЕРКА: Если MuPDF сделал файл тяжелее, отказываемся от его работы
+                if processed_path.stat().st_size >= cleaned_path.stat().st_size:
+                    logger.debug(f"MuPDF не улучшил результат. Оставляем pikepdf: {file_path.name}")
+                    shutil.copy2(cleaned_path, processed_path)
+            else:
+                logger.warning(f"MuPDF завершился с ошибкой, используем pikepdf: {file_path.name}")
                 shutil.copy2(cleaned_path, processed_path)
         else:
             shutil.copy2(cleaned_path, processed_path)

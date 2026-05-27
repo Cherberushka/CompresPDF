@@ -226,7 +226,7 @@ class PDFOptimizerCLI:
             epilog="""
 Примеры использования:
   %(prog)s "C:\\Documents" --quality better --workers 4
-  %(prog)s "C:\\Documents" --quality best --mupdf-aggression dd
+  %(prog)s "C:\\Documents" --quality best --mupdf-aggression gggg
   %(prog)s "C:\\Documents" --dry-run --min-size 0
   %(prog)s "C:\\Documents" --no-backup --no-rich
   %(prog)s "C:\\Documents" --preserve-signature --workers auto
@@ -236,11 +236,11 @@ class PDFOptimizerCLI:
   better  - pikepdf + MuPDF (80-90%% сжатие, ~2-3 сек/файл)
   best    - pikepdf + MuPDF макс. (85-92%% сжатие, ~3-4 сек/файл)
 
-Уровни агрессии MuPDF:
-  d       - Минимальное сжатие
-  dd      - Стандартное сжатие (по умолчанию)
-  ddd     - Сильное сжатие
-  dddd    - Максимальное сжатие
+Уровни сборки мусора MuPDF:
+  g       - Минимальная сборка мусора
+  gg      - Стандартная сборка мусора (по умолчанию)
+  ggg     - Сильная сборка мусора
+  gggg    - Максимальная сборка мусора
             """
         )
         
@@ -254,9 +254,9 @@ class PDFOptimizerCLI:
         parser.add_argument("--quality", type=str, default="fast",
                           choices=["fast", "better", "best"],
                           help="Режим обработки (fast/better/best)")
-        parser.add_argument("--mupdf-aggression", type=str, default="dd",
-                          choices=["d", "dd", "ddd", "dddd"],
-                          help="Уровень сжатия MuPDF")
+        parser.add_argument("--mupdf-aggression", type=str, default="gggg",
+                          choices=["g", "gg", "ggg", "gggg"],
+                          help="Уровень сборки мусора MuPDF")
         parser.add_argument("--preserve-signature", action="store_true",
                           help="Не удалять электронные подписи")
         parser.add_argument("--no-backup", action="store_true",
@@ -332,7 +332,7 @@ class PDFOptimizerCLI:
                 parsed_args.no_backup = settings.processing.no_backup
             if parsed_args.quality == "fast":
                 parsed_args.quality = settings.processing.quality
-            if parsed_args.mupdf_aggression == "dd":
+            if parsed_args.mupdf_aggression == "gggg":
                 parsed_args.mupdf_aggression = settings.processing.mupdf_aggression
             if parsed_args.min_size == 0:
                 parsed_args.min_size = settings.processing.min_size_mb
@@ -375,6 +375,9 @@ class PDFOptimizerCLI:
         # Обработка файлов
         processor = ParallelProcessor(max_workers=num_workers)
         results = []
+        
+        import time
+        start_time = time.time()
         
         if self.use_rich:
             with self.create_progress() as progress:
@@ -430,10 +433,7 @@ class PDFOptimizerCLI:
             )
         
         # Вывод итогов
-        import time
-        elapsed = getattr(processor, '_elapsed_time', 0) or sum(
-            1 for _ in results
-        ) * 0.1  # Заглушка, нужно добавить замер времени
+        elapsed = time.time() - start_time
         
         self.print_summary_table(results, elapsed)
         

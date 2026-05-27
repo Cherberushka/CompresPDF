@@ -104,7 +104,10 @@ def get_pdf_files(root_dir: str, min_size_mb: int,
             if path.is_file():
                 try:
                     size = path.stat().st_size
-                    if path.name.startswith(temp_prefix) or path.suffix == ".bak":
+                    # Исключаем временные файлы по префиксу И по директории .pdf_temp
+                    if (path.name.startswith(temp_prefix) or 
+                        path.suffix == ".bak" or
+                        '.pdf_temp' in path.parts):
                         continue
                     if size > min_size_bytes:
                         pdf_files.append(path)

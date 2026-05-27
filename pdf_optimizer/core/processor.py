@@ -297,7 +297,8 @@ def verify_pdf_integrity(file_path: Path) -> Tuple[bool, str]:
 
 def process_file(file_path: Path, mode: str, mupdf_aggression: str,
                  temp_dir: Path, preserve_signature: bool = False,
-                 no_backup: bool = False, temp_prefix: str = "pdf_opt_") -> bool:
+                 no_backup: bool = False, temp_prefix: str = "pdf_opt_",
+                 keep_bak: bool = False) -> bool:
     """
     Полный цикл обработки файла с валидацией и откатом
     
@@ -309,6 +310,7 @@ def process_file(file_path: Path, mode: str, mupdf_aggression: str,
         preserve_signature: Не удалять электронную подпись
         no_backup: Не создавать .bak файлы
         temp_prefix: Префикс временных файлов
+        keep_bak: Сохранять ли .bak файлы после обработки
         
     Returns:
         bool: Успешность обработки
@@ -374,6 +376,15 @@ def process_file(file_path: Path, mode: str, mupdf_aggression: str,
             f"✓ {file_path.name} ({original_size / 1024 / 1024:.2f} -> "
             f"{new_size / 1024 / 1024:.2f} МБ, -{reduction:.1f}%)"
         )
+        
+        # Удаление бэкапа если не нужно сохранять
+        if not keep_bak and not no_backup and backup_path.exists():
+            try:
+                backup_path.unlink()
+                logger.debug(f"Удалён бэкап: {backup_path.name}")
+            except OSError as e:
+                logger.warning(f"Не удалось удалить бэкап {backup_path.name}: {e}")
+        
         return True
         
     except Exception as e:

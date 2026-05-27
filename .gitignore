@@ -1,1 +1,13 @@
-Nothing should be ignored based on the provided file changes. The only modified file is a Python source file (`pdf_optimizer/core/processor.py`), which should not be ignored. There are no build artifacts, dependencies, temporary files, or other items that require ignoring.
+```gitignore
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Logs
+*.log
+
+# Test files
+test_pdfs/
+```

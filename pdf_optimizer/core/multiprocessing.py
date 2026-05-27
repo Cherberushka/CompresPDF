@@ -40,18 +40,18 @@ class ProcessResult:
         return self.new_size / 1024 / 1024
 
 
-def _process_single_file(args: Tuple[Path, str, str, Path, bool, bool, str]) -> ProcessResult:
+def _process_single_file(args: Tuple[Path, str, str, Path, bool, bool, str, bool]) -> ProcessResult:
     """
     Обработка одного файла (wrapper для multiprocessing)
     
     Args:
         args: Кортеж параметров (file_path, mode, mupdf_aggression, temp_dir, 
-              preserve_signature, no_backup, temp_prefix)
+              preserve_signature, no_backup, temp_prefix, keep_bak)
               
     Returns:
         ProcessResult с результатами обработки
     """
-    file_path, mode, mupdf_aggression, temp_dir, preserve_signature, no_backup, temp_prefix = args
+    file_path, mode, mupdf_aggression, temp_dir, preserve_signature, no_backup, temp_prefix, keep_bak = args
     
     logger = logging.getLogger(__name__)
     
@@ -65,7 +65,8 @@ def _process_single_file(args: Tuple[Path, str, str, Path, bool, bool, str]) -> 
             temp_dir=temp_dir,
             preserve_signature=preserve_signature,
             no_backup=no_backup,
-            temp_prefix=temp_prefix
+            temp_prefix=temp_prefix,
+            keep_bak=keep_bak
         )
         
         if success:
@@ -119,6 +120,7 @@ class ParallelProcessor:
                       preserve_signature: bool = False,
                       no_backup: bool = False,
                       temp_prefix: str = "pdf_opt_",
+                      keep_bak: bool = False,
                       progress_callback: Optional[callable] = None) -> List[ProcessResult]:
         """
         Параллельная обработка списка файлов
@@ -131,6 +133,7 @@ class ParallelProcessor:
             preserve_signature: Сохранять ли электронные подписи
             no_backup: Не создавать бэкапы
             temp_prefix: Префикс временных файлов
+            keep_bak: Сохранять ли .bak файлы после обработки
             progress_callback: Callback функция для отображения прогресса
             
         Returns:
@@ -143,7 +146,7 @@ class ParallelProcessor:
         # Примечание: каждый процесс будет иметь свой temp_dir
         args_list = [
             (file_path, mode, mupdf_aggression, temp_dir, 
-             preserve_signature, no_backup, temp_prefix)
+             preserve_signature, no_backup, temp_prefix, keep_bak)
             for file_path in files
         ]
         
@@ -167,6 +170,7 @@ class ParallelProcessor:
                                   preserve_signature: bool = False,
                                   no_backup: bool = False,
                                   temp_prefix: str = "pdf_opt_",
+                                  keep_bak: bool = False,
                                   progress_callback: Optional[callable] = None) -> List[ProcessResult]:
         """
         Последовательная обработка файлов (для отладки или когда multiprocessing недоступен)
@@ -179,6 +183,7 @@ class ParallelProcessor:
             preserve_signature: Сохранять ли электронные подписи
             no_backup: Не создавать бэкапы
             temp_prefix: Префикс временных файлов
+            keep_bak: Сохранять ли .bak файлы после обработки
             progress_callback: Callback функция для отображения прогресса
             
         Returns:
@@ -198,7 +203,8 @@ class ParallelProcessor:
                 temp_dir=temp_dir,
                 preserve_signature=preserve_signature,
                 no_backup=no_backup,
-                temp_prefix=temp_prefix
+                temp_prefix=temp_prefix,
+                keep_bak=keep_bak
             )
             
             if success:

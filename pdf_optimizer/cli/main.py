@@ -324,18 +324,19 @@ class PDFOptimizerCLI:
         # Если конфиг загружен, используем его значения для keep_bak и других параметров
         if parsed_args.config:
             settings = self.config_manager.settings
-            # Используем значения из конфига, если они не были явно указаны в CLI
-            if not hasattr(parsed_args, '_keep_bak_from_cli') or not parsed_args.keep_bak:
+            # Используем значения из конфига, только если соответствующие флаги не были указаны в CLI
+            # Проверяем, был ли флаг установлен явно (по умолчанию False для boolean флагов)
+            if parsed_args.keep_bak is False:
                 parsed_args.keep_bak = settings.processing.keep_bak
-            if not hasattr(parsed_args, '_no_backup_from_cli') or not parsed_args.no_backup:
+            if parsed_args.no_backup is False:
                 parsed_args.no_backup = settings.processing.no_backup
-            if not hasattr(parsed_args, '_quality_from_cli') or parsed_args.quality == "fast":
+            if parsed_args.quality == "fast":
                 parsed_args.quality = settings.processing.quality
-            if not hasattr(parsed_args, '_mupdf_aggression_from_cli') or parsed_args.mupdf_aggression == "dd":
+            if parsed_args.mupdf_aggression == "dd":
                 parsed_args.mupdf_aggression = settings.processing.mupdf_aggression
-            if not hasattr(parsed_args, '_min_size_from_cli') or parsed_args.min_size == 0:
+            if parsed_args.min_size == 0:
                 parsed_args.min_size = settings.processing.min_size_mb
-            if not hasattr(parsed_args, '_preserve_signature_from_cli') or not parsed_args.preserve_signature:
+            if parsed_args.preserve_signature is False:
                 parsed_args.preserve_signature = settings.processing.preserve_signature
         
         # Вывод предупреждений

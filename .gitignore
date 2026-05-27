@@ -1,13 +1,7 @@
 ```gitignore
-# Python cache
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-
-# Logs
-*.log
-
-# Test files
-test_pdfs/
+# Configuration files
+*.json
+!my_config.json
+!test_config.json
+!test_config_keep.json
 ```

@@ -1,0 +1,22 @@
+{
+  "processing": {
+    "quality": "best",
+    "mupdf_aggression": "dd",
+    "min_size_mb": 0,
+    "preserve_signature": false,
+    "no_backup": false,
+    "keep_bak": false
+  },
+  "paths": {
+    "root_dir": "",
+    "temp_dir": null,
+    "log_file": "pdf_process.log",
+    "backup_retention_days": 90
+  },
+  "display": {
+    "verbose": true,
+    "show_progress": true,
+    "use_colors": true,
+    "dry_run": false
+  }
+}

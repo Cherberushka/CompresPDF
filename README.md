@@ -97,6 +97,15 @@ python -m pdf_optimizer "C:\Documents" --preserve-signature
 
 # Простой текстовый вывод (без Rich)
 python -m pdf_optimizer "C:\Documents" --no-rich
+
+# Обработка файлов за конкретный период (год-месяц)
+python -m pdf_optimizer "C:\Documents" --year 2016 --month 12
+
+# Обработка файлов за весь год
+python -m pdf_optimizer "C:\Documents" --year 2017
+
+# Просмотр файлов за март 2020 без обработки
+python -m pdf_optimizer "C:\Documents" --year 2020 --month 3 --dry-run
 ```
 
 ### Работа с конфигурацией
@@ -136,6 +145,8 @@ python -m pdf_optimizer "C:\Documents" --config my_config.json
 | `--mupdf-aggression` | Уровень сжатия MuPDF (d/dd/ddd/dddd) | dd |
 | `--workers` | Количество процессов (auto/N) | auto |
 | `--min-size` | Минимальный размер файла в МБ | 0 |
+| `--year` | Год периода обработки (YYYY) | все годы |
+| `--month` | Месяц периода обработки (MM) | все месяцы |
 | `--preserve-signature` | Сохранять электронные подписи | ❌ |
 | `--no-backup` | Не создавать бэкапы | ❌ |
 | `--keep-bak` | Не удалять .bak файлы | ❌ |

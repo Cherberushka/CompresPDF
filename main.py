@@ -140,13 +140,19 @@ def validate_pdf(input_path: Path) -> Tuple[bool, str]:
 # 5. ФУНКЦИИ ОБРАБОТКИ
 # ==============================================================================
 
-def get_pdf_files(root_dir: str, min_size_mb: int) -> List[Path]:
+def get_pdf_files(root_dir: str, min_size_mb: int, 
+                  year: Optional[str] = None, 
+                  month: Optional[str] = None) -> List[Path]:
     pdf_files = []
     root_path = Path(root_dir).resolve()
     min_size_bytes = min_size_mb * 1024 * 1024
 
     logger.info(f"Сканирование: {root_path}")
     logger.info(f"Минимальный размер: {min_size_mb} МБ")
+    if year:
+        logger.info(f"Год: {year}")
+    if month:
+        logger.info(f"Месяц: {month}")
 
     try:
         for path in root_path.rglob("*.pdf"):
@@ -156,7 +162,67 @@ def get_pdf_files(root_dir: str, min_size_mb: int) -> List[Path]:
                     if path.name.startswith(DEFAULT_TEMP_PREFIX) or path.suffix == ".bak":
                         continue
                     if size > min_size_bytes:
-                        pdf_files.append(path)
+                        # Проверка пути на соответствие году/месяцу
+                        include_file = True
+                        
+                        if year or month:
+                            # Проверяем структуру папок год-месяц в пути
+                            path_str = str(path)
+                            parts = path_str.split(os.sep)
+                            
+                            found_year = False
+                            found_month = False
+                            
+                            for i, part in enumerate(parts):
+                                # Проверка формата YYYY-MM
+                                if len(part) == 7 and part[4:5] == '-' and part.replace('-', '').isdigit():
+                                    folder_year = part[:4]
+                                    folder_month = part[5:7]
+                                    
+                                    if year and folder_year == year:
+                                        found_year = True
+                                        if month and folder_month == month:
+                                            found_month = True
+                                            break
+                                        elif not month:
+                                            found_month = True
+                                            break
+                                    elif year and folder_year != year:
+                                        include_file = False
+                                        break
+                            
+                            # Если год не найден в папках YYYY-MM, проверяем обычные папки с годом
+                            if year and not found_year:
+                                for part in parts:
+                                    if part == year and part.isdigit() and len(part) == 4:
+                                        found_year = True
+                                        if month:
+                                            # Ищем месяц в соседних частях пути
+                                            idx = parts.index(part)
+                                            for j in range(max(0, idx-2), min(len(parts), idx+3)):
+                                                check_part = parts[j]
+                                                if len(check_part) == 7 and check_part[4:5] == '-':
+                                                    if check_part[5:7] == month:
+                                                        found_month = True
+                                                        break
+                                            if not found_month:
+                                                include_file = False
+                                        break
+                                
+                                if year and not found_year:
+                                    include_file = False
+                            
+                            if month and not year and not found_month:
+                                # Если указан только месяц, ищем папки с этим месяцем в формате YYYY-MM
+                                for part in parts:
+                                    if len(part) == 7 and part[4:5] == '-' and part[5:7] == month:
+                                        found_month = True
+                                        break
+                                if not found_month:
+                                    include_file = False
+                        
+                        if include_file:
+                            pdf_files.append(path)
                 except OSError as e:
                     logger.debug(f"Ошибка доступа {path}: {e}")
     except Exception as e:
@@ -437,6 +503,10 @@ def main():
                         help="Не удалять электронные подписи")
     parser.add_argument("--no-backup", action="store_true",
                         help="Не создавать .bak файлы (не рекомендуется для медицины)")
+    parser.add_argument("--year", type=str, default=None,
+                        help="Фильтр по году (например, 2016)")
+    parser.add_argument("--month", type=str, default=None,
+                        help="Фильтр по месяцу (например, 12)")
 
     args = parser.parse_args()
 
@@ -494,7 +564,7 @@ def main():
         logger.info("  → Движок: pikepdf + MuPDF (макс.)")
         logger.info("  → Сжатие: 85-92%")
 
-    files = get_pdf_files(args.path, args.min_size)
+    files = get_pdf_files(args.path, args.min_size, args.year, args.month)
 
     if not files:
         logger.info("Файлов для обработки не найдено.")

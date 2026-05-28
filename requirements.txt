@@ -1,0 +1,14 @@
+# PDF Batch Optimizer v15.0 - Dependencies
+
+# Core PDF processing
+pikepdf>=9.0.0
+
+# Rich console UI (optional, for beautiful output)
+rich>=13.0.0
+
+# Development dependencies (optional)
+# pytest>=7.0.0
+# pytest-cov>=4.0.0
+# black>=23.0.0
+# flake8>=6.0.0
+# mypy>=1.0.0

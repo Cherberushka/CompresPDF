@@ -140,13 +140,19 @@ def validate_pdf(input_path: Path) -> Tuple[bool, str]:
 # 5. ФУНКЦИИ ОБРАБОТКИ
 # ==============================================================================
 
-def get_pdf_files(root_dir: str, min_size_mb: int) -> List[Path]:
+def get_pdf_files(root_dir: str, min_size_mb: int, 
+                  year_filter: Optional[str] = None,
+                  month_filter: Optional[str] = None) -> List[Path]:
     pdf_files = []
     root_path = Path(root_dir).resolve()
     min_size_bytes = min_size_mb * 1024 * 1024
 
     logger.info(f"Сканирование: {root_path}")
     logger.info(f"Минимальный размер: {min_size_mb} МБ")
+    if year_filter:
+        logger.info(f"Фильтр по году: {year_filter}")
+    if month_filter:
+        logger.info(f"Фильтр по месяцу: {month_filter}")
 
     try:
         for path in root_path.rglob("*.pdf"):
@@ -156,7 +162,49 @@ def get_pdf_files(root_dir: str, min_size_mb: int) -> List[Path]:
                     if path.name.startswith(DEFAULT_TEMP_PREFIX) or path.suffix == ".bak":
                         continue
                     if size > min_size_bytes:
-                        pdf_files.append(path)
+                        # Проверка пути на соответствие фильтру года/месяца
+                        include_file = True
+                        
+                        if year_filter or month_filter:
+                            # Получаем относительный путь от корневой директории
+                            try:
+                                rel_path = path.relative_to(root_path)
+                                parts = rel_path.parts
+                                
+                                # Проверяем наличие папок в формате YYYY-MM или YYYY
+                                folder_match = False
+                                for part in parts[:-1]:  # Исключаем имя файла
+                                    # Проверка формата YYYY-MM
+                                    if len(part) == 7 and part[4:5] == '-':
+                                        folder_year = part[:4]
+                                        folder_month = part[5:7]
+                                        
+                                        if year_filter and folder_year != year_filter:
+                                            continue
+                                        if month_filter and folder_month != month_filter:
+                                            continue
+                                        folder_match = True
+                                        break
+                                    
+                                    # Проверка формата YYYY (только год)
+                                    elif len(part) == 4 and part.isdigit():
+                                        folder_year = part
+                                        
+                                        if year_filter and folder_year != year_filter:
+                                            continue
+                                        folder_match = True
+                                        break
+                                
+                                # Если фильтры заданы, но папка не найдена в нужном формате
+                                # включаем файл только если нет строгого требования к папкам
+                                if year_filter or month_filter:
+                                    include_file = folder_match
+                            except ValueError:
+                                # Не удалось получить относительный путь
+                                include_file = False
+                        
+                        if include_file:
+                            pdf_files.append(path)
                 except OSError as e:
                     logger.debug(f"Ошибка доступа {path}: {e}")
     except Exception as e:
@@ -414,6 +462,8 @@ def main():
   %(prog)s "C:\\Documents" --dry-run --min-size 0
   %(prog)s "C:\\Documents" --no-backup --min-size 0
   %(prog)s "C:\\Documents" --preserve-signature --keep-bak
+  %(prog)s "C:\\Documents" --year 2016 --month 12
+  %(prog)s "C:\\Documents" --year 2018 --dry-run
         """
     )
     parser.add_argument("path", help="Путь к корневой директории")
@@ -437,6 +487,10 @@ def main():
                         help="Не удалять электронные подписи")
     parser.add_argument("--no-backup", action="store_true",
                         help="Не создавать .bak файлы (не рекомендуется для медицины)")
+    parser.add_argument("--year", type=str, default=None,
+                        help="Фильтр по году (формат YYYY, например 2016)")
+    parser.add_argument("--month", type=str, default=None,
+                        help="Фильтр по месяцу (формат MM, например 12)")
 
     args = parser.parse_args()
 
@@ -494,7 +548,7 @@ def main():
         logger.info("  → Движок: pikepdf + MuPDF (макс.)")
         logger.info("  → Сжатие: 85-92%")
 
-    files = get_pdf_files(args.path, args.min_size)
+    files = get_pdf_files(args.path, args.min_size, args.year, args.month)
 
     if not files:
         logger.info("Файлов для обработки не найдено.")

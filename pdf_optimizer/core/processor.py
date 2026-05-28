@@ -9,13 +9,12 @@ import os
 import shutil
 import logging
 import subprocess
+import glob
 from pathlib import Path
 from typing import Tuple, List, Optional
 from enum import Enum
 
 import pikepdf
-
-from ..config.settings import AppSettings
 
 
 class ProcessingMode(Enum):
@@ -104,74 +103,70 @@ def get_pdf_files(root_dir: str, min_size_mb: int,
 def clean_with_pikepdf(input_path: Path, output_path: Path,
                        preserve_signature: bool = False) -> bool:
     """Очистка PDF с помощью pikepdf"""
-    pdf = None
     logger = logging.getLogger(__name__)
 
     try:
+        # Безопасное открытие: некоторые версии pikepdf не знают аргумент repair
         try:
             pdf = pikepdf.open(input_path, repair=True)
         except TypeError:
             pdf = pikepdf.open(input_path)
 
-        stats = {
-            'annotations': 0,
-            'forms': 0,
-            'metadata': 0,
-            'outlines': 0,
-            'names': 0
-        }
+        # Использование контекстного менеджера для гарантированного закрытия файла
+        with pdf:
+            stats = {
+                'annotations': 0,
+                'forms': 0,
+                'metadata': 0,
+                'outlines': 0,
+                'names': 0
+            }
 
-        if not preserve_signature:
-            for page in pdf.pages:
-                if '/Annots' in page:
-                    try:
-                        del page['/Annots']
-                        stats['annotations'] += 1
-                    except (KeyError, Exception) as e:
-                        logger.debug(f"Не удалось удалить /Annots: {e}")
+            if not preserve_signature:
+                for page in pdf.pages:
+                    if '/Annots' in page:
+                        try:
+                            del page['/Annots']
+                            stats['annotations'] += 1
+                        except (KeyError, Exception) as e:
+                            logger.debug(f"Не удалось удалить /Annots: {e}")
 
-            for key in ['/AcroForm', '/Metadata', '/Outlines', '/Names']:
-                if key in pdf.Root:
-                    try:
-                        del pdf.Root[key]
-                        stats['forms'] += 1
-                    except (KeyError, Exception) as e:
-                        logger.debug(f"Не удалось удалить {key}: {e}")
+                for key in ['/AcroForm', '/Metadata', '/Outlines', '/Names']:
+                    if key in pdf.Root:
+                        try:
+                            del pdf.Root[key]
+                            stats['forms'] += 1
+                        except (KeyError, Exception) as e:
+                            logger.debug(f"Не удалось удалить {key}: {e}")
 
-        if hasattr(pdf, 'docinfo') and pdf.docinfo and not preserve_signature:
-            try:
-                pdf.docinfo.clear()
-                stats['metadata'] += 1
-            except Exception as e:
-                logger.debug(f"Не удалось очистить docinfo: {e}")
+            if hasattr(pdf, 'docinfo') and pdf.docinfo and not preserve_signature:
+                try:
+                    pdf.docinfo.clear()
+                    stats['metadata'] += 1
+                except Exception as e:
+                    logger.debug(f"Не удалось очистить docinfo: {e}")
 
-        save_success = False
-        for params in [
-            {'garbage': 4, 'deflate': True, 'linearize': True},
-            {'garbage': 3, 'deflate': True, 'linearize': True},
-            {'deflate': True, 'linearize': True},
-            {}
-        ]:
-            try:
-                pdf.save(output_path, **params)
-                save_success = True
-                break
-            except TypeError:
-                continue
+            save_success = False
+            for params in [
+                {'garbage': 4, 'deflate': True, 'linearize': True},
+                {'garbage': 3, 'deflate': True, 'linearize': True},
+                {'deflate': True, 'linearize': True},
+                {}
+            ]:
+                try:
+                    pdf.save(output_path, **params)
+                    save_success = True
+                    break
+                except TypeError:
+                    continue
 
-        if not save_success:
-            pdf.save(output_path)
+            if not save_success:
+                pdf.save(output_path)
 
-        pdf.close()
         return True
 
     except Exception as e:
         logger.error(f"pikepdf ошибка для {input_path.name}: {e}")
-        if pdf:
-            try:
-                pdf.close()
-            except:
-                pass
         return False
 
 
@@ -179,8 +174,6 @@ def rebuild_with_mupdf(input_path: Path, output_path: Path,
                        aggression: str = "gggg") -> bool:
     """Пересборка PDF с помощью MuPDF"""
 
-    # АУДИТ: Убран флаг '-f' (Compress fonts), так как он может
-    # разрушать уже поврежденные/невнедренные шрифты для веб-просмотрщиков (Яндекс).
     args = [
         "mutool",
         "clean",
@@ -234,32 +227,30 @@ def get_ghostscript_path() -> str:
             pass
 
         # 2. Ищем в стандартных папках установки (64-bit)
-        import glob
         paths_64 = glob.glob(r"C:\Program Files\gs\gs*\bin\gswin64c.exe")
         if paths_64:
-            return paths_64[-1]  # Берем последнюю версию, если их несколько
+            return paths_64[-1]
 
         # 3. Ищем в стандартных папках установки (32-bit)
         paths_32 = glob.glob(r"C:\Program Files (x86)\gs\gs*\bin\gswin32c.exe")
         if paths_32:
             return paths_32[-1]
 
-        return "gswin64c"  # Возвращаем имя по умолчанию, если ничего не найдено
+        return "gswin64c"
     return "gs"
 
 
 def fix_fonts_with_ghostscript(input_path: Path, output_path: Path) -> bool:
     """
     Лечение шрифтов через Ghostscript (Преобразование текста в кривые).
-    Решает проблему артефактов-заглушек (кружочков с цифрами).
-    Гарантирует корректное отображение в Яндекс.Документах и любых браузерах.
+    КРИТИЧЕСКИ ВАЖНО для медицинских PDF/выгрузок из 1С:
+    Возвращаем -dNoOutputFonts, чтобы убрать артефакты (кружочки с цифрами).
+    Добавляем -dGridFitTT=0 и -dAlignToPixels=0, чтобы при переводе в кривые
+    не появлялись пробелы после букв "т" или "ч".
     """
     logger = logging.getLogger(__name__)
-
-    # Определяем команду с помощью умного поиска
     gs_cmd = get_ghostscript_path()
 
-    # Проверяем, доступен ли Ghostscript
     try:
         subprocess.run([gs_cmd, "--version"], capture_output=True, check=True)
     except (FileNotFoundError, subprocess.CalledProcessError):
@@ -269,12 +260,14 @@ def fix_fonts_with_ghostscript(input_path: Path, output_path: Path) -> bool:
     args = [
         gs_cmd,
         "-sDEVICE=pdfwrite",
-        "-dCompatibilityLevel=1.4",
-        "-dPDFSETTINGS=/printer",  # Высокое разрешение печати
+        "-dCompatibilityLevel=1.7",  # Повышенная совместимость
+        "-dPDFSETTINGS=/printer",    # Оптимально для перевода в вектор
         "-dNOPAUSE",
         "-dQUIET",
         "-dBATCH",
-        "-dNoOutputFonts",  # КРИТИЧЕСКИ ВАЖНО: Преобразует ВЕСЬ текст в векторные кривые!
+        "-dNoOutputFonts",           # КРИТИЧНО: Возвращаем перевод в кривые
+        "-dGridFitTT=0",             # ФИКС: Отключает искажение ширины кириллицы (пробелы после 'т')
+        "-dAlignToPixels=0",         # ФИКС: Запрещает Ghostscript привязывать кривые к пикселям
         f"-sOutputFile={output_path}",
         str(input_path)
     ]
@@ -285,7 +278,7 @@ def fix_fonts_with_ghostscript(input_path: Path, output_path: Path) -> bool:
             return True
         return False
     except Exception as e:
-        logger.debug(f"Ошибка Ghostscript при конвертации в кривые: {e}")
+        logger.debug(f"Ошибка Ghostscript при лечении шрифтов: {e}")
         return False
 
 
@@ -334,12 +327,11 @@ def process_file(file_path: Path, mode: str, mupdf_aggression: str,
 
         shutil.copy2(file_path, temp_path)
 
-        # ЭТАП 0: Опциональное лечение шрифтов Ghostscript (если установлен)
-        # Это переведет текст в кривые ПЕРЕД очисткой
+        # ЭТАП 0: Опциональное лечение шрифтов Ghostscript (теперь без перевода в кривые)
         current_working_path = temp_path
         if fix_fonts_with_ghostscript(temp_path, gs_fixed_path):
             current_working_path = gs_fixed_path
-            logger.debug(f"Текст успешно переведен в кривые для {file_path.name}")
+            logger.debug(f"Шрифты успешно исправлены (embedded) для {file_path.name}")
 
         # Этап 1: Очистка pikepdf
         if not clean_with_pikepdf(current_working_path, cleaned_path, preserve_signature):
@@ -375,7 +367,9 @@ def process_file(file_path: Path, mode: str, mupdf_aggression: str,
                 shutil.copy2(backup_path, file_path)
             return False
 
+        # Вывод статистики сжатия в лог
         reduction = ((original_size - new_size) / original_size) * 100
+        logger.info(f"Файл {file_path.name} обработан. Сжатие: {reduction:.2f}%")
 
         if not keep_bak and not no_backup and backup_path.exists():
             try:

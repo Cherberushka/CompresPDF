@@ -1,0 +1,27 @@
+[Unit]
+Description=PDF Batch Optimizer Docker Service
+Requires=docker.service
+After=docker.service network.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+# Укажите абсолютный путь к папке с вашим docker-compose.yml
+WorkingDirectory=/opt/CompresPDF
+
+# Остановка старых контейнеров перед запуском
+ExecStartPre=-/usr/bin/docker compose down
+ExecStartPre=-/usr/bin/docker compose rm -f
+
+# Запуск сервиса
+ExecStart=/usr/bin/docker compose up --build
+
+# Остановка сервиса
+ExecStop=/usr/bin/docker compose down
+
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

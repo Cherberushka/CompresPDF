@@ -1,146 +1,96 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-PDF Optimizer Configuration Module
-Управление конфигурацией приложения
-"""
-
-from dataclasses import dataclass, field
+import os
 from pathlib import Path
-from typing import Optional, List
-import json
+from typing import List, Literal, Optional
+from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import BaseModel, Field, field_validator
 
 
-@dataclass
-class ProcessingConfig:
-    """Конфигурация обработки PDF файлов"""
-    quality: str = "fast"  # fast, better, best
-    mupdf_aggression: str = "dd"  # d, dd, ddd, dddd
-    min_size_mb: int = 0
-    preserve_signature: bool = False
-    no_backup: bool = False
-    keep_bak: bool = False
+class SchedulerJobConfig(BaseModel):
+    name: str = "default_job"
+    cron: str = "0 * * * *"  # Раз в час по умолчанию
+    since: str = "24h"
+    root_dir: str
+    quality: Literal["fast", "default", "archive", "maximum"] = "default"
+    aggression: str = "gg"
+
+    @field_validator('aggression', mode='before')
+    @classmethod
+    def validate_aggression(cls, v: str) -> str:
+        valid_levels = {'g', 'gg', 'ggg', 'gggg'}
+        val = str(v).lower().strip()
+        if val not in valid_levels:
+            # Исправлен баг v14.1 (d/dd/ddd/dddd -> g/gg/ggg/gggg)
+            raise ValueError(f"MuPDF aggression must be one of {valid_levels}")
+        return val
 
 
-@dataclass
-class PathsConfig:
-    """Конфигурация путей"""
-    root_dir: str = ""
-    temp_dir: Optional[Path] = None
-    log_file: str = "pdf_process.log"
-    backup_retention_days: int = 90
+class SchedulerConfig(BaseModel):
+    jobs: List[SchedulerJobConfig] = Field(default_factory=list)
 
 
-@dataclass
-class DisplayConfig:
-    """Конфигурация отображения"""
-    verbose: bool = True
-    show_progress: bool = True
-    use_colors: bool = True
-    dry_run: bool = False
+class ApiConfig(BaseModel):
+    host: str = "0.0.0.0"
+    port: int = 8080
 
 
-@dataclass
-class AppSettings:
-    """Основные настройки приложения"""
-    processing: ProcessingConfig = field(default_factory=ProcessingConfig)
-    paths: PathsConfig = field(default_factory=PathsConfig)
-    display: DisplayConfig = field(default_factory=DisplayConfig)
-    
-    # Константы
-    DEFAULT_TEMP_PREFIX: str = "pdf_opt_"
-    VERSION: str = "15.0.0"
-    APP_NAME: str = "PDF Batch Optimizer"
+class AppSettings(BaseSettings):
+    """
+    12-factor конфигурация сервиса.
+    Порядок: дефолты -> конфигурационный файл (опционально) -> переменные окружения.
+    """
+    # Пути (серверные дефолты)
+    data_dir: Path = Field(default=Path("/data"))
+    log_dir: Path = Field(default=Path("/var/log/pdf-optimizer"))
+    db_path: Path = Field(default=Path("/data/registry.sqlite"))
+
+    # Вложенные конфигурации
+    api: ApiConfig = Field(default_factory=ApiConfig)
+    scheduler: SchedulerConfig = Field(default_factory=SchedulerConfig)
+
+    # Глобальные параметры процесса
+    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
+    no_backup: bool = False  # SAFE DEFAULT: Для сервера бэкапы ВКЛЮЧЕНЫ
+    backup_retention_days: int = 30
+
+    # Системные бинарники
+    ghostscript_path: str = "gs"
+    mutool_path: str = "mutool"
+
+    # Настройки загрузки из Env
+    model_config = SettingsConfigDict(
+        env_prefix="PDF_OPTIMIZER__",
+        env_nested_delimiter="__",  # Пример: PDF_OPTIMIZER__API__PORT=8000
+        env_file=".env",
+        extra="ignore"
+    )
 
 
-class ConfigManager:
-    """Менеджер конфигурации приложения"""
-    
-    def __init__(self, config_file: Optional[Path] = None):
-        self.config_file = config_file
-        self.settings = AppSettings()
-        
-    def load_from_file(self, path: Path) -> AppSettings:
-        """Загрузка конфигурации из JSON файла"""
-        if not path.exists():
-            raise FileNotFoundError(f"Config file not found: {path}")
-        
-        with open(path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-        
-        if 'processing' in data:
-            proc = data['processing']
-            self.settings.processing = ProcessingConfig(
-                quality=proc.get('quality', 'fast'),
-                mupdf_aggression=proc.get('mupdf_aggression', 'dd'),
-                min_size_mb=proc.get('min_size_mb', 0),
-                preserve_signature=proc.get('preserve_signature', False),
-                no_backup=proc.get('no_backup', False),
-                keep_bak=proc.get('keep_bak', False)
-            )
-        
-        if 'paths' in data:
-            paths = data['paths']
-            self.settings.paths = PathsConfig(
-                root_dir=paths.get('root_dir', ''),
-                temp_dir=Path(paths['temp_dir']) if paths.get('temp_dir') else None,
-                log_file=paths.get('log_file', 'pdf_process.log'),
-                backup_retention_days=paths.get('backup_retention_days', 90)
-            )
-        
-        if 'display' in data:
-            disp = data['display']
-            self.settings.display = DisplayConfig(
-                verbose=disp.get('verbose', True),
-                show_progress=disp.get('show_progress', True),
-                use_colors=disp.get('use_colors', True),
-                dry_run=disp.get('dry_run', False)
-            )
-        
-        return self.settings
-    
-    def save_to_file(self, path: Path) -> None:
-        """Сохранение конфигурации в JSON файл"""
-        data = {
-            'processing': {
-                'quality': self.settings.processing.quality,
-                'mupdf_aggression': self.settings.processing.mupdf_aggression,
-                'min_size_mb': self.settings.processing.min_size_mb,
-                'preserve_signature': self.settings.processing.preserve_signature,
-                'no_backup': self.settings.processing.no_backup,
-                'keep_bak': self.settings.processing.keep_bak
-            },
-            'paths': {
-                'root_dir': self.settings.paths.root_dir,
-                'temp_dir': str(self.settings.paths.temp_dir) if self.settings.paths.temp_dir else None,
-                'log_file': self.settings.paths.log_file,
-                'backup_retention_days': self.settings.paths.backup_retention_days
-            },
-            'display': {
-                'verbose': self.settings.display.verbose,
-                'show_progress': self.settings.display.show_progress,
-                'use_colors': self.settings.display.use_colors,
-                'dry_run': self.settings.display.dry_run
-            }
-        }
-        
-        with open(path, 'w', encoding='utf-8') as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
-    
-    def create_default_config(self, path: Path) -> None:
-        """Создание файла конфигурации по умолчанию"""
-        self.save_to_file(path)
-    
-    @staticmethod
-    def validate_quality(value: str) -> bool:
-        """Валидация режима качества"""
-        return value in ['fast', 'better', 'best']
-    
-    @staticmethod
-    def validate_aggression(value: str) -> bool:
-        """Валидация уровня агрессии MuPDF"""
-        return value in ['d', 'dd', 'ddd', 'dddd']
+# Глобальный инстанс настроек для импорта в модулях
+# Вызывает валидацию конфигурации при старте приложения
+settings = AppSettings()
 
 
-# Глобальный экземпляр для быстрого доступа
-config_manager = ConfigManager()
+def load_yaml_config(config_path: Path) -> None:
+    """Опциональный загрузчик конфигурации из YAML файла"""
+    import yaml
+    global settings
+
+    if config_path.exists():
+        with open(config_path, 'r', encoding='utf-8') as f:
+            yaml_data = yaml.safe_load(f) or {}
+
+        # Обновляем инстанс settings с приоритетом YAML (если env не заданы)
+        # В Pydantic v2 это делается через копирование или переинициализацию
+        current_dump = settings.model_dump()
+
+        # Простой merge словарей (в реальности лучше использовать глубокий merge)
+        def deep_update(d, u):
+            for k, v in u.items():
+                if isinstance(v, dict):
+                    d[k] = deep_update(d.get(k, {}), v)
+                else:
+                    d[k] = v
+            return d
+
+        merged_data = deep_update(current_dump, yaml_data)
+        settings = AppSettings(**merged_data)

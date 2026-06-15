@@ -1,0 +1,31 @@
+# Пример файла конфигурации config.yaml
+# Скопируйте этот файл как config.yaml рядом с docker-compose.yml
+
+api:
+  host: "0.0.0.0"
+  port: 8080
+
+log_level: "INFO"
+no_backup: false  # Рекомендуется держать false (создавать .bak) на первых этапах
+backup_retention_days: 14
+
+scheduler:
+  jobs:
+    - name: "daily_inbox_compression"
+      # Синтаксис cron: запускать каждый день в 02:00 ночи
+      cron: "0 2 * * *"
+      # Обрабатывать только файлы, измененные за последние 24 часа
+      since: "24h"
+      # Путь внутри Docker-контейнера (соответствует volume ./data:/data)
+      root_dir: "/data/inbox"
+      quality: "default"
+      aggression: "gg"
+
+    - name: "hourly_urgent_compression"
+      # Синтаксис cron: каждую 15-ю минуту часа
+      cron: "15 * * * *"
+      # Берем только совсем свежие файлы
+      since: "2h"
+      root_dir: "/data/urgent"
+      quality: "fast"
+      aggression: "g"

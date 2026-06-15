@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  pdf-optimizer:
+    build: .
+    container_name: pdf-optimizer-daemon
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      # Директория с вашими PDF файлами (монтируем внутрь контейнера)
+      - ./data:/data
+      # Директория для логов
+      - ./logs:/var/log/pdf-optimizer
+      # Конфигурационный файл (только для чтения)
+      - ./config.yaml:/app/config.yaml:ro
+    environment:
+      # Настройки можно переопределять через ENV-переменные
+      - PDF_OPTIMIZER__LOG_LEVEL=INFO
+      - PDF_OPTIMIZER__NO_BACKUP=false
+      # Передаем таймзону сервера для корректной работы APScheduler (cron)
+      - TZ=Europe/Moscow

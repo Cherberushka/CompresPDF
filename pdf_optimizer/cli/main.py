@@ -247,19 +247,22 @@ class PDFOptimizerCLI:
         parser.add_argument("path", help="Путь к корневой директории")
         parser.add_argument("--dry-run", action="store_true",
                           help="Только список файлов без обработки")
-        parser.add_argument("--min-size", type=int, default=0,
-                          help="Мин размер в МБ (по умолчанию 0)")
-        parser.add_argument("--keep-bak", action="store_true",
+        # SUPPRESS: значение появится в parsed_args только если флаг явно указан.
+        # Это позволяет корректно применять конфиг только к неуказанным флагам
+        # (раньше --quality fast молча заменялся значением из конфига, т.к. fast — дефолт).
+        parser.add_argument("--min-size", type=int, default=argparse.SUPPRESS,
+                          help="Мин размер в МБ (по умолчанию из конфига или 0)")
+        parser.add_argument("--keep-bak", action="store_true", default=argparse.SUPPRESS,
                           help="Не удалять .bak файлы (хранить 90 дней)")
-        parser.add_argument("--quality", type=str, default="fast",
+        parser.add_argument("--quality", type=str, default=argparse.SUPPRESS,
                           choices=["fast", "better", "best"],
                           help="Режим обработки (fast/better/best)")
-        parser.add_argument("--mupdf-aggression", type=str, default="gggg",
+        parser.add_argument("--mupdf-aggression", type=str, default=argparse.SUPPRESS,
                           choices=["g", "gg", "ggg", "gggg"],
                           help="Уровень сборки мусора MuPDF")
-        parser.add_argument("--preserve-signature", action="store_true",
+        parser.add_argument("--preserve-signature", action="store_true", default=argparse.SUPPRESS,
                           help="Не удалять электронные подписи")
-        parser.add_argument("--no-backup", action="store_true",
+        parser.add_argument("--no-backup", action="store_true", default=argparse.SUPPRESS,
                           help="Не создавать .bak файлы")
         parser.add_argument("--workers", type=str, default="auto",
                           help="Количество процессов (auto/N, по умолчанию auto)")
@@ -320,24 +323,20 @@ class PDFOptimizerCLI:
             self.logger.info(f"Configuration saved to {parsed_args.save_config}")
             return 0
         
-        # Переопределение аргументов командной строки значениями из конфига
-        # Если конфиг загружен, используем его значения для keep_bak и других параметров
-        if parsed_args.config:
-            settings = self.config_manager.settings
-            # Используем значения из конфига, только если соответствующие флаги не были указаны в CLI
-            # Проверяем, был ли флаг установлен явно (по умолчанию False для boolean флагов)
-            if parsed_args.keep_bak is False:
-                parsed_args.keep_bak = settings.processing.keep_bak
-            if parsed_args.no_backup is False:
-                parsed_args.no_backup = settings.processing.no_backup
-            if parsed_args.quality == "fast":
-                parsed_args.quality = settings.processing.quality
-            if parsed_args.mupdf_aggression == "gggg":
-                parsed_args.mupdf_aggression = settings.processing.mupdf_aggression
-            if parsed_args.min_size == 0:
-                parsed_args.min_size = settings.processing.min_size_mb
-            if parsed_args.preserve_signature is False:
-                parsed_args.preserve_signature = settings.processing.preserve_signature
+        # Заполняем значения из конфига только для тех параметров, которые НЕ были
+        # указаны в CLI. Благодаря argparse.SUPPRESS неуказанные флаги отсутствуют
+        # в parsed_args, поэтому hasattr корректно отличает «явно задано» от «по умолчанию».
+        settings = self.config_manager.settings
+        parsed_args.keep_bak = getattr(parsed_args, 'keep_bak', settings.processing.keep_bak)
+        parsed_args.no_backup = getattr(parsed_args, 'no_backup', settings.processing.no_backup)
+        parsed_args.quality = getattr(parsed_args, 'quality', settings.processing.quality)
+        parsed_args.mupdf_aggression = getattr(
+            parsed_args, 'mupdf_aggression', settings.processing.mupdf_aggression
+        )
+        parsed_args.min_size = getattr(parsed_args, 'min_size', settings.processing.min_size_mb)
+        parsed_args.preserve_signature = getattr(
+            parsed_args, 'preserve_signature', settings.processing.preserve_signature
+        )
         
         # Вывод предупреждений
         self.print_warnings(parsed_args.no_backup, parsed_args.preserve_signature)

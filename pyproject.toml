@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pdf-optimizer"
+version = "15.1.0"
+description = "Сервис пакетной оптимизации PDF (FastAPI + APScheduler)"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [
+    {name = "K-Dense Inc", email = "dev@example.com"}
+]
+dependencies = [
+    "fastapi>=0.110.0",
+    "uvicorn>=0.29.0",
+    "apscheduler>=3.10.4",
+    "pydantic-settings>=2.2.1",
+    "pydantic>=2.6.4",
+    "pikepdf>=8.13.0",
+    "PyYAML>=6.0.1",
+    # Для SQLite дополнительных драйверов не нужно, используем stdlib (sqlite3)
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-cov>=4.1.0",
+    "black>=24.2.0",
+    "mypy>=1.9.0",
+    "httpx>=0.27.0" # Для тестирования FastAPI
+]
+
+[project.scripts]
+# Точка входа для запуска утилиты (CLI оставим для отладки и ручных запусков)
+pdf-optimizer = "pdf_optimizer.cli.main:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.black]
+line-length = 100
+target-version = ['py311', 'py312']

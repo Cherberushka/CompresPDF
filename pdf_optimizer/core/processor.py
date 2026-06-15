@@ -1,391 +1,192 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-PDF Optimizer Core Module
-Основные функции обработки PDF файлов (включая фикс шрифтов)
-"""
-
 import os
 import shutil
-import logging
 import subprocess
-import glob
+import logging
 from pathlib import Path
-from typing import Tuple, List, Optional
-from enum import Enum
-
+from typing import List, Optional
+from dataclasses import dataclass
 import pikepdf
 
+# fcntl доступен только на Unix-системах (Ubuntu)
+# Оборачиваем в try-except на случай локального запуска на Windows
+try:
+    import fcntl
+except ImportError:
+    fcntl = None
 
-class ProcessingMode(Enum):
-    """Режимы обработки PDF"""
-    FAST = "fast"
-    BETTER = "better"
-    BEST = "best"
+from pdf_optimizer.config.settings import settings
 
-
-class ValidationResult:
-    """Результат валидации PDF файла"""
-
-    def __init__(self, is_valid: bool, message: str, error: Optional[Exception] = None):
-        self.is_valid = is_valid
-        self.message = message
-        self.error = error
-
-    def __bool__(self) -> bool:
-        return self.is_valid
-
-    def __str__(self) -> str:
-        return f"Valid: {self.is_valid}, Message: {self.message}"
+logger = logging.getLogger("PDFOptimizer.processor")
 
 
-def validate_pdf(input_path: Path) -> ValidationResult:
-    """Валидация PDF файла"""
-    if not input_path.exists():
-        return ValidationResult(False, "Файл не существует")
-
-    if input_path.stat().st_size == 0:
-        return ValidationResult(False, "Пустой файл")
-
-    try:
-        with open(input_path, 'rb') as f:
-            header = f.read(8)
-            if not header.startswith(b'%PDF'):
-                return ValidationResult(False, "Неверная сигнатура PDF")
-    except Exception as e:
-        return ValidationResult(False, f"Ошибка чтения файла: {e}", e)
-
-    try:
-        with pikepdf.open(input_path) as pdf:
-            if pdf.is_encrypted:
-                return ValidationResult(False, "PDF зашифрован")
-            if len(pdf.pages) == 0:
-                return ValidationResult(False, "PDF не содержит страниц")
-    except pikepdf.PasswordError:
-        return ValidationResult(False, "PDF защищён паролем")
-    except Exception as e:
-        return ValidationResult(False, f"Не удалось открыть PDF: {e}", e)
-
-    return ValidationResult(True, "OK")
+@dataclass
+class ProcessItem:
+    """Объект, описывающий задачу на сжатие одного файла."""
+    pdf_path: Path
+    quality: str = "default"
+    aggression: str = "gg"
 
 
-def get_pdf_files(root_dir: str, min_size_mb: int,
-                  temp_prefix: str = "pdf_opt_") -> List[Path]:
-    """Поиск PDF файлов в директории"""
-    pdf_files = []
-    root_path = Path(root_dir).resolve()
-    min_size_bytes = min_size_mb * 1024 * 1024
-
-    logger = logging.getLogger(__name__)
-    logger.info(f"Сканирование: {root_path}")
-    logger.info(f"Минимальный размер: {min_size_mb} МБ")
-
-    try:
-        for path in root_path.rglob("*.pdf"):
-            if path.is_file():
-                try:
-                    size = path.stat().st_size
-                    if (path.name.startswith(temp_prefix) or
-                            path.suffix == ".bak" or
-                            '.pdf_temp' in path.parts):
-                        continue
-                    if size > min_size_bytes:
-                        pdf_files.append(path)
-                except OSError as e:
-                    logger.debug(f"Ошибка доступа {path}: {e}")
-    except Exception as e:
-        logger.error(f"Ошибка сканирования: {e}")
-
-    logger.info(f"Найдено файлов: {len(pdf_files)}")
-    return pdf_files
+@dataclass
+class ProcessResult:
+    """Результат обработки одного файла для оркестратора."""
+    success: bool
+    original_path: Path
+    original_size: int
+    final_size: int
+    error_message: Optional[str] = None
 
 
-def clean_with_pikepdf(input_path: Path, output_path: Path,
-                       preserve_signature: bool = False) -> bool:
-    """Очистка PDF с помощью pikepdf"""
-    logger = logging.getLogger(__name__)
-
-    try:
-        # Безопасное открытие: некоторые версии pikepdf не знают аргумент repair
-        try:
-            pdf = pikepdf.open(input_path, repair=True)
-        except TypeError:
-            pdf = pikepdf.open(input_path)
-
-        # Использование контекстного менеджера для гарантированного закрытия файла
-        with pdf:
-            stats = {
-                'annotations': 0,
-                'forms': 0,
-                'metadata': 0,
-                'outlines': 0,
-                'names': 0
-            }
-
-            if not preserve_signature:
-                for page in pdf.pages:
-                    if '/Annots' in page:
-                        try:
-                            del page['/Annots']
-                            stats['annotations'] += 1
-                        except (KeyError, Exception) as e:
-                            logger.debug(f"Не удалось удалить /Annots: {e}")
-
-                for key in ['/AcroForm', '/Metadata', '/Outlines', '/Names']:
-                    if key in pdf.Root:
-                        try:
-                            del pdf.Root[key]
-                            stats['forms'] += 1
-                        except (KeyError, Exception) as e:
-                            logger.debug(f"Не удалось удалить {key}: {e}")
-
-            if hasattr(pdf, 'docinfo') and pdf.docinfo and not preserve_signature:
-                try:
-                    pdf.docinfo.clear()
-                    stats['metadata'] += 1
-                except Exception as e:
-                    logger.debug(f"Не удалось очистить docinfo: {e}")
-
-            save_success = False
-            for params in [
-                {'garbage': 4, 'deflate': True, 'linearize': True},
-                {'garbage': 3, 'deflate': True, 'linearize': True},
-                {'deflate': True, 'linearize': True},
-                {}
-            ]:
-                try:
-                    pdf.save(output_path, **params)
-                    save_success = True
-                    break
-                except TypeError:
-                    continue
-
-            if not save_success:
-                pdf.save(output_path)
-
-        return True
-
-    except Exception as e:
-        logger.error(f"pikepdf ошибка для {input_path.name}: {e}")
-        return False
-
-
-def rebuild_with_mupdf(input_path: Path, output_path: Path,
-                       aggression: str = "gggg") -> bool:
-    """Пересборка PDF с помощью MuPDF"""
-
-    args = [
-        "mutool",
-        "clean",
-        f"-{aggression}",  # Garbage collection level
-        "-z",  # Deflate streams (сжатие)
-        str(input_path),
-        str(output_path)
-    ]
-
-    logger = logging.getLogger(__name__)
-
-    try:
-        result = subprocess.run(args, capture_output=True, text=True, timeout=180)
-
-        if result.returncode != 0:
-            logger.debug(f"MuPDF error: {result.stderr[:200]}")
-            return False
-
-        if not output_path.exists() or output_path.stat().st_size == 0:
-            return False
-
-        try:
-            with pikepdf.open(input_path) as src:
-                with pikepdf.open(output_path) as dst:
-                    if len(src.pages) != len(dst.pages):
-                        logger.error(
-                            f"Потеря страниц: {len(src.pages)} → {len(dst.pages)}"
-                        )
-                        return False
-        except Exception as e:
-            logger.debug(f"Не удалось проверить страницы: {e}")
-
-        return True
-
-    except subprocess.TimeoutExpired:
-        logger.error(f"MuPDF таймаут для {input_path.name}")
-        return False
-    except Exception as e:
-        logger.error(f"MuPDF ошибка для {input_path.name}: {e}")
-        return False
-
-
-def get_ghostscript_path() -> str:
-    """Умный поиск пути к Ghostscript (особенно полезно для Windows)"""
-    if os.name == 'nt':
-        # 1. Проверяем, есть ли он в системном PATH
-        try:
-            subprocess.run(["gswin64c", "--version"], capture_output=True, check=True)
-            return "gswin64c"
-        except (FileNotFoundError, subprocess.CalledProcessError):
-            pass
-
-        # 2. Ищем в стандартных папках установки (64-bit)
-        paths_64 = glob.glob(r"C:\Program Files\gs\gs*\bin\gswin64c.exe")
-        if paths_64:
-            return paths_64[-1]
-
-        # 3. Ищем в стандартных папках установки (32-bit)
-        paths_32 = glob.glob(r"C:\Program Files (x86)\gs\gs*\bin\gswin32c.exe")
-        if paths_32:
-            return paths_32[-1]
-
-        return "gswin64c"
-    return "gs"
-
-
-def fix_fonts_with_ghostscript(input_path: Path, output_path: Path) -> bool:
+def get_pdf_files(root_dir: Path) -> List[Path]:
     """
-    Лечение шрифтов через Ghostscript (Преобразование текста в кривые).
-    КРИТИЧЕСКИ ВАЖНО для медицинских PDF/выгрузок из 1С:
-    Возвращаем -dNoOutputFonts, чтобы убрать артефакты (кружочки с цифрами).
-    Добавляем -dGridFitTT=0 и -dAlignToPixels=0, чтобы при переводе в кривые
-    не появлялись пробелы после букв "т" или "ч".
+    Рекурсивно ищет все PDF файлы в директории.
+    (Временная фильтрация теперь делегирована модулю filtering.py)
     """
-    logger = logging.getLogger(__name__)
-    gs_cmd = get_ghostscript_path()
-
-    try:
-        subprocess.run([gs_cmd, "--version"], capture_output=True, check=True)
-    except (FileNotFoundError, subprocess.CalledProcessError):
-        logger.debug("Ghostscript не установлен или не найден, пропускаем глубокое лечение шрифтов.")
-        return False
-
-    args = [
-        gs_cmd,
-        "-sDEVICE=pdfwrite",
-        "-dCompatibilityLevel=1.7",  # Повышенная совместимость
-        "-dPDFSETTINGS=/printer",    # Оптимально для перевода в вектор
-        "-dNOPAUSE",
-        "-dQUIET",
-        "-dBATCH",
-        "-dNoOutputFonts",           # КРИТИЧНО: Возвращаем перевод в кривые
-        "-dGridFitTT=0",             # ФИКС: Отключает искажение ширины кириллицы (пробелы после 'т')
-        "-dAlignToPixels=0",         # ФИКС: Запрещает Ghostscript привязывать кривые к пикселям
-        f"-sOutputFile={output_path}",
-        str(input_path)
-    ]
-
-    try:
-        result = subprocess.run(args, capture_output=True, text=True, timeout=300)
-        if result.returncode == 0 and output_path.exists() and output_path.stat().st_size > 0:
-            return True
-        return False
-    except Exception as e:
-        logger.debug(f"Ошибка Ghostscript при лечении шрифтов: {e}")
-        return False
+    return list(root_dir.rglob("*.pdf"))
 
 
-def cleanup_temp_files(*paths: Path) -> None:
-    """Очистка временных файлов"""
-    for p in paths:
-        if p and p.exists():
+class PDFProcessor:
+    """
+    Класс для обработки одиночного PDF-файла.
+    Пайплайн: Ghostscript -> pikepdf -> MuPDF
+    """
+
+    def __init__(self):
+        self.logger = logging.getLogger("PDFOptimizer.processor.PDFProcessor")
+        self.gs_path = settings.ghostscript_path
+        self.mutool_path = settings.mutool_path
+
+    def _replace_file_safely(self, temp_pdf: Path, target_pdf: Path):
+        """Атомарная замена файла с использованием fcntl.flock для защиты от гонок (Фаза 5)."""
+        if fcntl:
             try:
-                p.unlink()
-            except OSError:
-                pass
-
-
-def verify_pdf_integrity(file_path: Path) -> Tuple[bool, str]:
-    """Проверка целостности PDF после обработки"""
-    try:
-        with pikepdf.open(file_path) as pdf:
-            if len(pdf.pages) == 0:
-                return False, "Пустой PDF после обработки"
-            if pdf.is_encrypted:
-                return False, "PDF зашифрован после обработки"
-        return True, "OK"
-    except Exception as e:
-        return False, f"Не удалось открыть: {e}"
-
-
-def process_file(file_path: Path, mode: str, mupdf_aggression: str,
-                 temp_dir: Path, preserve_signature: bool = False,
-                 no_backup: bool = False, temp_prefix: str = "pdf_opt_",
-                 keep_bak: bool = False) -> bool:
-    """Полный цикл обработки файла"""
-    logger = logging.getLogger(__name__)
-    unique_id = f"{temp_prefix}{os.getpid()}_{file_path.name}"
-
-    temp_path = temp_dir / unique_id
-    cleaned_path = temp_dir / f"{unique_id}_cleaned"
-    processed_path = temp_dir / f"{unique_id}_processed"
-    gs_fixed_path = temp_dir / f"{unique_id}_gs_fixed"
-    backup_path = file_path.with_suffix(file_path.suffix + ".bak")
-
-    try:
-        validation = validate_pdf(file_path)
-        if not validation:
-            logger.error(f"Валидация не пройдена {file_path.name}: {validation.message}")
-            return False
-
-        shutil.copy2(file_path, temp_path)
-
-        # ЭТАП 0: Опциональное лечение шрифтов Ghostscript (теперь без перевода в кривые)
-        current_working_path = temp_path
-        if fix_fonts_with_ghostscript(temp_path, gs_fixed_path):
-            current_working_path = gs_fixed_path
-            logger.debug(f"Шрифты успешно исправлены (embedded) для {file_path.name}")
-
-        # Этап 1: Очистка pikepdf
-        if not clean_with_pikepdf(current_working_path, cleaned_path, preserve_signature):
-            raise Exception("Не удалось очистить PDF")
-
-        # Этап 2: Пересборка MuPDF
-        if mode in ["better", "best"]:
-            if rebuild_with_mupdf(cleaned_path, processed_path, mupdf_aggression):
-                if processed_path.stat().st_size >= cleaned_path.stat().st_size:
-                    logger.debug(f"MuPDF не улучшил результат. Оставляем pikepdf: {file_path.name}")
-                    shutil.copy2(cleaned_path, processed_path)
-            else:
-                logger.warning(f"MuPDF завершился с ошибкой, используем pikepdf: {file_path.name}")
-                shutil.copy2(cleaned_path, processed_path)
+                # Открываем целевой файл для установки эксклюзивной блокировки ОС
+                with open(target_pdf, 'a') as f:
+                    fcntl.flock(f, fcntl.LOCK_EX)
+                    try:
+                        # os.replace гарантирует атомарность на уровне ФС (POSIX)
+                        # Если процесс убьют прямо сейчас, файл не повредится
+                        os.replace(temp_pdf, target_pdf)
+                    finally:
+                        fcntl.flock(f, fcntl.LOCK_UN)
+            except OSError as e:
+                self.logger.error(f"Ошибка при атомарной записи {target_pdf}: {e}")
+                raise
         else:
-            shutil.copy2(cleaned_path, processed_path)
+            # Fallback для разработки на Windows
+            os.replace(temp_pdf, target_pdf)
 
-        original_size = file_path.stat().st_size
-        new_size = processed_path.stat().st_size
+    def _get_gs_quality_param(self, quality: str) -> str:
+        """Отображение уровня качества на пресеты Ghostscript."""
+        mapping = {
+            "fast": "/screen",  # Низкое разрешение (72 dpi)
+            "default": "/ebook",  # Среднее качество (150 dpi)
+            "archive": "/printer",  # Высокое качество (300 dpi)
+            "maximum": "/prepress"  # Максимальное качество (сохранение цветов)
+        }
+        return mapping.get(quality, "/ebook")
 
-        if new_size == 0:
-            raise Exception("Результирующий файл пуст")
+    def process_file(self, item: ProcessItem) -> ProcessResult:
+        """
+        Основной метод обработки одного файла.
+        Выполняет цепочку преобразований и безопасно заменяет оригинал в случае успеха.
+        """
+        original_size = 0
+        final_size = 0
 
-        if not no_backup:
-            shutil.copy2(file_path, backup_path)
+        if not item.pdf_path.exists():
+            return ProcessResult(False, item.pdf_path, 0, 0, "Файл не существует")
 
-        shutil.move(processed_path, file_path)
+        original_size = item.pdf_path.stat().st_size
 
-        is_valid, msg = verify_pdf_integrity(file_path)
-        if not is_valid:
-            logger.error(f"Целостность нарушена {file_path.name}: {msg}")
-            if not no_backup and backup_path.exists():
-                shutil.copy2(backup_path, file_path)
-            return False
+        # Определяем временные пути
+        temp_dir = item.pdf_path.parent
+        pid = os.getpid()
+        gs_temp = temp_dir / f".~gs_{pid}_{item.pdf_path.name}"
+        pike_temp = temp_dir / f".~pike_{pid}_{item.pdf_path.name}"
+        mu_temp = temp_dir / f".~mu_{pid}_{item.pdf_path.name}"
+        backup_path = temp_dir / f"{item.pdf_path.name}.bak"
 
-        # Вывод статистики сжатия в лог
-        reduction = ((original_size - new_size) / original_size) * 100
-        logger.info(f"Файл {file_path.name} обработан. Сжатие: {reduction:.2f}%")
+        try:
+            self.logger.debug(f"Начало обработки: {item.pdf_path.name} (Качество: {item.quality})")
 
-        if not keep_bak and not no_backup and backup_path.exists():
-            try:
-                backup_path.unlink()
-            except OSError:
-                pass
+            # ШАГ 1: Ghostscript (Исправление структуры и сжатие изображений)
+            gs_cmd = [
+                self.gs_path,
+                "-sDEVICE=pdfwrite",
+                "-dCompatibilityLevel=1.4",
+                f"-dPDFSETTINGS={self._get_gs_quality_param(item.quality)}",
+                "-dNOPAUSE",
+                "-dQUIET",
+                "-dBATCH",
+                f"-sOutputFile={str(gs_temp)}",
+                str(item.pdf_path)
+            ]
+            subprocess.run(gs_cmd, check=True, capture_output=True)
 
-        return True
+            # ШАГ 2: pikepdf (Очистка метаданных, сборка мусора, линеаризация)
+            with pikepdf.open(str(gs_temp)) as pdf:
+                pdf.save(
+                    str(pike_temp),
+                    linearize=True,
+                    object_stream_mode=pikepdf.ObjectStreamMode.generate
+                )
 
-    except Exception as e:
-        logger.error(f"Сбой {file_path.name}: {e}")
-        if not no_backup and backup_path.exists():
-            try:
-                shutil.copy2(backup_path, file_path)
-            except:
-                pass
-        return False
-    finally:
-        cleanup_temp_files(temp_path, cleaned_path, processed_path, gs_fixed_path)
+            # ШАГ 3: MuPDF mutool clean (Глубокая пересборка и финальная оптимизация)
+            # Используем исправленную агрессию (g/gg/ggg/gggg)
+            mu_cmd = [
+                self.mutool_path,
+                "clean",
+                f"-{item.aggression}",
+                str(pike_temp),
+                str(mu_temp)
+            ]
+            subprocess.run(mu_cmd, check=True, capture_output=True)
+
+            # Проверка результата
+            if not mu_temp.exists() or mu_temp.stat().st_size == 0:
+                raise ValueError("Сгенерирован пустой или поврежденный файл")
+
+            final_size = mu_temp.stat().st_size
+
+            # Если сжать удалось
+            if final_size < original_size:
+                # 1. Опционально создаем бэкап
+                if not settings.no_backup:
+                    shutil.copy2(str(item.pdf_path), str(backup_path))
+
+                # 2. Атомарно заменяем оригинал новым сжатым файлом
+                self._replace_file_safely(mu_temp, item.pdf_path)
+
+                self.logger.info(
+                    f"Успешно: {item.pdf_path.name} "
+                    f"({original_size / 1024 / 1024:.2f}MB -> {final_size / 1024 / 1024:.2f}MB)"
+                )
+                return ProcessResult(True, item.pdf_path, original_size, final_size)
+            else:
+                self.logger.info(f"Пропущено (файл не стал меньше): {item.pdf_path.name}")
+                return ProcessResult(True, item.pdf_path, original_size, original_size)
+
+        except subprocess.CalledProcessError as e:
+            err_msg = f"Ошибка subprocess: {e.stderr.decode('utf-8', errors='ignore')}"
+            self.logger.error(f"{err_msg} при обработке {item.pdf_path}")
+            return ProcessResult(False, item.pdf_path, original_size, 0, err_msg)
+
+        except Exception as e:  # Устранен опасный bare except (Фаза 0)
+            err_msg = str(e)
+            self.logger.error(f"Произошла непредвиденная ошибка при обработке {item.pdf_path}: {err_msg}")
+
+            # Если был сбой и бэкап уже создан, но оригинальный файл поврежден - восстанавливаем
+            if backup_path.exists() and item.pdf_path.exists() and item.pdf_path.stat().st_size == 0:
+                shutil.move(str(backup_path), str(item.pdf_path))
+
+            return ProcessResult(False, item.pdf_path, original_size, 0, err_msg)
+
+        finally:
+            # Гарантированная очистка временных файлов (Фаза 0)
+            for temp_file in [gs_temp, pike_temp, mu_temp]:
+                try:
+                    if temp_file.exists():
+                        temp_file.unlink()
+                except OSError:
+                    pass

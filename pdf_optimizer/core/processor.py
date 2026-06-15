@@ -3,7 +3,6 @@
 """
 PDF Optimizer Core Module
 Основные функции обработки PDF файлов (включая фикс шрифтов)
-"""
 
 import os
 import shutil
@@ -26,7 +25,6 @@ class ProcessingMode(Enum):
 
 class ValidationResult:
     """Результат валидации PDF файла"""
-
     def __init__(self, is_valid: bool, message: str, error: Optional[Exception] = None):
         self.is_valid = is_valid
         self.message = message
@@ -46,7 +44,6 @@ def validate_pdf(input_path: Path) -> ValidationResult:
 
     if input_path.stat().st_size == 0:
         return ValidationResult(False, "Пустой файл")
-
     try:
         with open(input_path, 'rb') as f:
             header = f.read(8)
@@ -54,7 +51,7 @@ def validate_pdf(input_path: Path) -> ValidationResult:
                 return ValidationResult(False, "Неверная сигнатура PDF")
     except Exception as e:
         return ValidationResult(False, f"Ошибка чтения файла: {e}", e)
-
+        
     try:
         with pikepdf.open(input_path) as pdf:
             if pdf.is_encrypted:
@@ -79,7 +76,6 @@ def get_pdf_files(root_dir: str, min_size_mb: int,
     logger = logging.getLogger(__name__)
     logger.info(f"Сканирование: {root_path}")
     logger.info(f"Минимальный размер: {min_size_mb} МБ")
-
     try:
         for path in root_path.rglob("*.pdf"):
             if path.is_file():
@@ -95,7 +91,6 @@ def get_pdf_files(root_dir: str, min_size_mb: int,
                     logger.debug(f"Ошибка доступа {path}: {e}")
     except Exception as e:
         logger.error(f"Ошибка сканирования: {e}")
-
     logger.info(f"Найдено файлов: {len(pdf_files)}")
     return pdf_files
 
@@ -111,7 +106,6 @@ def clean_with_pikepdf(input_path: Path, output_path: Path,
             pdf = pikepdf.open(input_path, repair=True)
         except TypeError:
             pdf = pikepdf.open(input_path)
-
         # Использование контекстного менеджера для гарантированного закрытия файла
         with pdf:
             stats = {
@@ -194,7 +188,6 @@ def rebuild_with_mupdf(input_path: Path, output_path: Path,
 
         if not output_path.exists() or output_path.stat().st_size == 0:
             return False
-
         try:
             with pikepdf.open(input_path) as src:
                 with pikepdf.open(output_path) as dst:
@@ -280,7 +273,6 @@ def fix_fonts_with_ghostscript(input_path: Path, output_path: Path) -> bool:
     except Exception as e:
         logger.debug(f"Ошибка Ghostscript при лечении шрифтов: {e}")
         return False
-
 
 def cleanup_temp_files(*paths: Path) -> None:
     """Очистка временных файлов"""

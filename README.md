@@ -1,239 +1,103 @@
-# PDF Batch Optimizer v15.0
+PDF Batch Optimizer (v15.1.0)
+Высокопроизводительный фоновый сервис (daemon) для пакетного сжатия и оптимизации PDF-файлов на серверах Ubuntu/Linux.
+Использует трехступенчатый пайплайн деградации: **Ghostscript** (восстановление структуры и даунсэмплинг) → **pikepdf** (сборка мусора и линеаризация) → **MuPDF mutool** (глубокая очистка).
 
-[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+# ✨ Ключевые возможности
+- **Фоновая работа по расписанию**: Встроенный APScheduler позволяет настроить cron-задачи для разных директорий.
+- **Фильтрация по времени (Smart Scan)**: Обрабатывает только новые/измененные файлы (--since 24h, --since 7d).
+- **Идемпотентность (SQLite WAL)**: Встроенный реестр запоминает обработанные файлы по хэшу и `mtime`. Защита от повторного сжатия одних и тех же файлов.
+- **REST API**: Управляйте задачами, проверяйте статус и запускайте dry-run сканирование через HTTP.
+- **Safe I/O**: Защита от повреждений файлов при сбоях (атомарная запись os.replace + эксклюзивные блокировки Linux `fcntl`).
 
-**Многопроцессорный оптимизатор PDF файлов** — инструмент для пакетной обработки и сжатия PDF документов с сохранением целостности данных.
-
-## 🚀 Возможности
-
-- **Многопроцессорная обработка** — параллельная обработка файлов с использованием всех ядер CPU
-- **Два движка оптимизации**:
-  - `pikepdf` — быстрая очистка и сжатие (70-80%)
-  - `MuPDF` — глубокая оптимизация (80-92%)
-- **Три режима качества**:
-  - `fast` — только pikepdf (~1 сек/файл)
-  - `better` — pikepdf + MuPDF (~2-3 сек/файл)
-  - `best` — максимальное сжатие (~3-4 сек/файл)
-- **Безопасность**:
-  - Автоматическое создание бэкапов (.bak)
-  - Проверка целостности после обработки
-  - Откат при ошибках
-- **Улучшенный CLI**:
-  - Красивый вывод с цветами (Rich library)
-  - Индикатор прогресса
-  - Итоговые таблицы статистики
-- **Конфигурация через JSON** — сохранение и загрузка настроек
-
-## 📦 Установка
-
-### Требования
-
-- Python 3.8+
-- pikepdf
-- MuPDF (опционально, для режимов better/best)
-
-### Быстрая установка
-
-```bash
-pip install -r requirements.txt
+# 🚀 Быстрый старт (Docker Compose)
+Это рекомендуемый способ развертывания на серверах Ubuntu. Образ уже включает Python 3.12, Ghostscript и MuPDF.
+**1. Клонируйте репозиторий:**
+```
+git clone <your-repo-url> /opt/CompresPDF
+cd /opt/CompresPDF
+```
+**2. Настройте конфигурацию:**
+```
+cp config.sample.yaml config.yaml
+# Отредактируйте config.yaml (настройте расписание и пути)
+nano config.yaml 
 ```
 
-### Установка MuPDF (Windows)
+**3. Запустите сервис:**
+```
+mkdir -p data logs
+docker compose up -d
+```
+Сервис будет доступен на порту 8080 (по умолчанию).
 
-```powershell
-winget install ArtifexSoftware.MuPDF
+# ⚙️ Конфигурация (config.yaml)
+Настройки можно задавать через файл config.yaml или через переменные окружения (префикс PDF_OPTIMIZER__).
+```
+api:
+  host: "0.0.0.0"
+  port: 8080
+
+log_level: "INFO"
+no_backup: false # Оставьте false для создания .bak файлов (защита от потери данных)
+
+scheduler:
+  jobs:
+    - name: "daily_inbox"
+      cron: "0 2 * * *" # Каждый день в 02:00
+      since: "24h"      # Искать файлы, измененные только за последние 24 часа
+      root_dir: "/data/inbox"
+      quality: "default"
+      aggression: "gg"
+```
+Формат времени (since)Поддерживаемые единицы: m (минуты), h (часы), d (дни), w (недели), mo (месяцы), y (годы).
+Примеры: 30m, 24h, 7d, 3mo, 1y.
+
+# 📡 REST API Reference
+Вы можете управлять сервисом удаленно с помощью HTTP-запросов (например, из других ваших систем).
+1. Запуск задачи сжатия вручную (Async)Добавляет задачу в фоновую очередь.
+```
+curl -X POST http://localhost:8080/api/jobs \
+  -H "Content-Type: application/json" \
+  -d '{
+    "root_dir": "/data/documents",
+    "since": "48h",
+    "quality": "fast",
+    "aggression": "ggg"
+  }'
+```
+2. Симуляция сканирования (Dry-Run)
+Позволяет узнать, какие файлы будут сжаты (с учетом времени и базы идемпотентности), до фактического запуска.
+```
+curl -X POST http://localhost:8080/api/scan \
+  -H "Content-Type: application/json" \
+  -d '{
+    "root_dir": "/data/documents",
+    "since": "7d"
+  }'
+```
+3. История аудитаПолучить список последних выполненных задач и сэкономленное место.
+```
+curl http://localhost:8080/api/jobs?limit=10
+```
+4. Перезагрузка расписанияЕсли вы изменили config.yaml, примените новые cron-задачи без рестарта контейнера:
+```
+curl -X POST http://localhost:8080/api/scheduler/reload
+```
+# 💻 Использование через CLI (Для разработчиков)Если вы разрабатываете локально без Docker, можно использовать CLI.
+```
+ Установка (требуются установленные в системе ghostscript и mupdf-tools)
+pip install -e .
+
+# Запуск ручного сканирования
+pdf-optimizer --dir /path/to/pdfs --since 7d --quality archive --aggression ggg
+
+# Запуск API-сервера локально
+uvicorn pdf_optimizer.api.app:app --reload
 ```
 
-### Установка MuPDF (Linux)
-
-```bash
-sudo apt-get install mupdf-tools
+# 🛠 Тестирование
+Проект покрыт тестами с помощью `pytest` (включая проверку идемпотентности SQLite и парсинг времени).
 ```
-
-## 📁 Структура проекта
-
+pip install -e ".[dev]"
+pytest tests/ -v
 ```
-pdf_optimizer/
-├── __init__.py          # Основной пакет
-├── __main__.py          # Точка входа
-├── config/
-│   ├── __init__.py
-│   └── settings.py      # Управление конфигурацией
-├── core/
-│   ├── __init__.py
-│   ├── processor.py     # Основные функции обработки
-│   └── multiprocessing.py  # Многопроцессорная обработка
-├── cli/
-│   ├── __init__.py
-│   └── main.py          # Консольный интерфейс
-└── utils/
-    ├── __init__.py
-    └── helpers.py       # Вспомогательные функции
-```
-
-## 💻 Использование
-
-### Базовые команды
-
-```bash
-# Запуск с настройками по умолчанию
-python -m pdf_optimizer "C:\Documents"
-
-# Режим лучшего качества с 4 процессами
-python -m pdf_optimizer "C:\Documents" --quality better --workers 4
-
-# Максимальное сжатие
-python -m pdf_optimizer "C:\Documents" --quality best --mupdf-aggression dd
-
-# Только просмотр без обработки
-python -m pdf_optimizer "C:\Documents" --dry-run
-
-# Без создания бэкапов (не рекомендуется!)
-python -m pdf_optimizer "C:\Documents" --no-backup
-
-# Сохранение электронных подписей
-python -m pdf_optimizer "C:\Documents" --preserve-signature
-
-# Простой текстовый вывод (без Rich)
-python -m pdf_optimizer "C:\Documents" --no-rich
-```
-
-### Работа с конфигурацией
-
-```bash
-# Сохранить текущие настройки в файл
-python -m pdf_optimizer . --save-config my_config.json
-
-# Загрузить настройки из файла
-python -m pdf_optimizer "C:\Documents" --config my_config.json
-```
-
-### Пример конфигурации (JSON)
-
-```json
-{
-  "processing": {
-    "quality": "better",
-    "mupdf_aggression": "dd",
-    "min_size_mb": 1,
-    "preserve_signature": false,
-    "no_backup": false
-  },
-  "display": {
-    "verbose": true,
-    "show_progress": true
-  }
-}
-```
-
-## 📊 Параметры командной строки
-
-| Параметр | Описание                             | По умолчанию  |
-|----------|--------------------------------------|---------------|
-| `path` | Путь к корневой директории           | *обязательно* |
-| `--quality` | Режим обработки (fast/better/best)   | fast          |
-| `--mupdf-aggression` | Уровень сжатия MuPDF (g/gg/ggg/gggg) | gg            |
-| `--workers` | Количество процессов (auto/N)        | auto          |
-| `--min-size` | Минимальный размер файла в МБ        | 0             |
-| `--preserve-signature` | Сохранять электронные подписи        | ❌             |
-| `--no-backup` | Не создавать бэкапы                  | ❌             |
-| `--keep-bak` | Не удалять .bak файлы                | ❌             |
-| `--dry-run` | Только список файлов                 | ❌             |
-| `--no-rich` | Отключить красивый вывод             | ❌             |
-| `--verbose, -v` | Подробный вывод                      | ❌             |
-| `--config` | Путь к файлу конфигурации            | -             |
-| `--save-config` | Сохранить настройки в файл           | -             |
-
-## 🔧 API для разработчиков
-
-```python
-from pdf_optimizer import (
-    ParallelProcessor,
-    ConfigManager,
-    validate_pdf,
-    process_file
-)
-
-# Использование конфигурации
-config = ConfigManager()
-settings = config.settings
-
-# Параллельная обработка
-processor = ParallelProcessor(max_workers=4)
-results = processor.process_files(
-    files=pdf_files,
-    mode="better",
-    mupdf_aggression="dd",
-    temp_dir=temp_path
-)
-
-# Обработка результатов
-for result in results:
-    if result.success:
-        print(f"✓ {result.file_path.name}: -{result.reduction_percent:.1f}%")
-```
-
-## ⚠️ Важные предупреждения
-
-### Электронные подписи
-При обработке **электронные подписи удаляются**. Оптимизированные файлы теряют юридическую силу. 
-
-**Рекомендация**: Используйте `--preserve-signature` для файлов с ЭП или сохраняйте оригиналы.
-
-### Бэкапы
-По умолчанию создаются копии оригиналов с расширением `.bak`. 
-
-**Требование Минздрава РФ**: хранение бэкапов медицинских документов минимум 90 дней.
-
-## 🐛 Troubleshooting
-
-### Ошибка: "MuPDF NOT FOUND"
-```bash
-# Windows
-winget install ArtifexSoftware.MuPDF
-
-# Linux
-sudo apt-get install mupdf-tools
-
-# macOS
-brew install mupdf
-```
-
-### Ошибка доступа к файлам
-Запустите от имени администратора или проверьте права доступа к директории.
-
-### Проблемы с кодировкой
-Убедитесь, что в путях нет специальных символов. Используйте короткие пути или 8.3 имена.
-
-## 📈 Производительность
-
-| Режим | Сжатие | Скорость | Использование CPU |
-|-------|--------|----------|-------------------|
-| fast | 70-80% | ~1 сек/файл | Низкое |
-| better | 80-90% | ~2-3 сек/файл | Среднее |
-| best | 85-92% | ~3-4 сек/файл | Высокое |
-
-**Оптимизация**: Используйте `--workers auto` для автоматического выбора количества процессов.
-
-## 🤝 Вклад в проект
-
-1. Fork репозитория
-2. Создайте ветку (`git checkout -b feature/amazing-feature`)
-3. Commit изменений (`git commit -m 'Add amazing feature'`)
-4. Push (`git push origin feature/amazing-feature`)
-5. Откройте Pull Request
-
-## 📄 Лицензия
-
-MIT License — см. файл [LICENSE](LICENSE) для деталей.
-
-## 👨‍💻 Автор
-
-Senior Python Developer  
-Version 15.0.0 (Multiprocessing Edition)  
-Дата: 2026-03-27
-
----
-
-**Предыдущие версии**: v14.1 (Fixed no-backup), v14.0, v13.x

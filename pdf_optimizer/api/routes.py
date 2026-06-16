@@ -1,6 +1,7 @@
 from fastapi import APIRouter, BackgroundTasks, Request, HTTPException
 from pathlib import Path
 import sqlite3
+import os
 
 from .schemas import JobRequest, ScanRequest, ScanResponse
 from pdf_optimizer.core.processor import get_pdf_files
@@ -11,16 +12,46 @@ from pdf_optimizer.scheduler.schedule import reload_jobs
 router = APIRouter()
 
 
+def validate_path_safety(path: str) -> Path:
+    """
+    Валидация пути для предотвращения path traversal атак.
+    Проверяет, что путь находится в разрешенной директории.
+    """
+    resolved_path = Path(path).resolve()
+    
+    # Разрешенные базовые директории
+    allowed_bases = [
+        settings.data_dir.resolve(),
+    ]
+    
+    # Проверяем, начинается ли путь с одной из разрешенных базовых директорий
+    is_safe = any(
+        str(resolved_path).startswith(str(base)) 
+        for base in allowed_bases
+    )
+    
+    if not is_safe:
+        raise HTTPException(
+            status_code=403, 
+            detail=f"Доступ к пути запрещен. Разрешены только пути внутри {settings.data_dir}"
+        )
+    
+    return resolved_path
+
+
 @router.post("/jobs", status_code=202)
 async def create_job(request: Request, job_req: JobRequest, background_tasks: BackgroundTasks):
     """Запускает задачу сжатия в фоновом режиме."""
     runner = request.app.state.runner
 
+    # Валидация пути перед использованием
+    root_path = validate_path_safety(job_req.root_dir)
+
     # Добавляем выполнение run_job в background_tasks FastAPI
     background_tasks.add_task(
         runner.run_job,
         source="api",
-        root_dir=job_req.root_dir,
+        root_dir=str(root_path),
         since=job_req.since,
         quality=job_req.quality,
         aggression=job_req.aggression
@@ -48,7 +79,9 @@ async def scan_directory(request: Request, scan_req: ScanRequest):
     (с учетом временного фильтра и базы данных идемпотентности).
     """
     registry = request.app.state.registry
-    root_path = Path(scan_req.root_dir)
+    
+    # Валидация пути перед использованием
+    root_path = validate_path_safety(scan_req.root_dir)
 
     if not root_path.exists():
         raise HTTPException(status_code=404, detail="Директория не найдена на сервере")

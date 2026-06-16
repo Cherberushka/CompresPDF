@@ -6,6 +6,22 @@ pikepdf>=9.0.0
 # Rich console UI (optional, for beautiful output)
 rich>=13.0.0
 
+# FastAPI and web server
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+python-multipart>=0.0.6
+
+# Configuration and validation
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+PyYAML>=6.0.0
+
+# Scheduler
+APScheduler>=3.10.0
+
+# Security and rate limiting
+slowapi>=0.1.9
+
 # Development dependencies (optional)
 # pytest>=7.0.0
 # pytest-cov>=4.0.0

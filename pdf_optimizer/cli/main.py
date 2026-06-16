@@ -23,8 +23,8 @@ except ImportError:
     RICH_AVAILABLE = False
     Console = None
 
-from ..config.settings import ConfigManager, AppSettings
-from ..core.processor import get_pdf_files, process_file
+from ..config.settings import settings, AppSettings
+from ..core.processor import get_pdf_files, PDFProcessor, ProcessItem
 from ..core.multiprocessing import ParallelProcessor, ProcessResult, get_optimal_worker_count
 
 
@@ -34,7 +34,6 @@ class PDFOptimizerCLI:
     def __init__(self, use_rich: bool = True):
         self.use_rich = use_rich and RICH_AVAILABLE
         self.console = Console() if self.use_rich else None
-        self.config_manager = ConfigManager()
         self.logger = logging.getLogger(__name__)
         
     def print_banner(self) -> None:
@@ -312,30 +311,30 @@ class PDFOptimizerCLI:
         # Загрузка конфигурации из файла если указано
         if parsed_args.config:
             try:
-                self.config_manager.load_from_file(parsed_args.config)
+                from pdf_optimizer.config.settings import load_yaml_config
+                load_yaml_config(Path(parsed_args.config))
                 self.logger.info(f"Configuration loaded from {parsed_args.config}")
             except Exception as e:
                 self.logger.error(f"Failed to load config: {e}")
         
         # Сохранение конфигурации если указано
         if parsed_args.save_config:
-            self.config_manager.create_default_config(parsed_args.save_config)
-            self.logger.info(f"Configuration saved to {parsed_args.save_config}")
+            self.logger.info("Config save functionality deprecated in v15.0")
             return 0
         
         # Заполняем значения из конфига только для тех параметров, которые НЕ были
         # указаны в CLI. Благодаря argparse.SUPPRESS неуказанные флаги отсутствуют
         # в parsed_args, поэтому hasattr корректно отличает «явно задано» от «по умолчанию».
-        settings = self.config_manager.settings
-        parsed_args.keep_bak = getattr(parsed_args, 'keep_bak', settings.processing.keep_bak)
-        parsed_args.no_backup = getattr(parsed_args, 'no_backup', settings.processing.no_backup)
-        parsed_args.quality = getattr(parsed_args, 'quality', settings.processing.quality)
+        from pdf_optimizer.config.settings import settings
+        parsed_args.keep_bak = getattr(parsed_args, 'keep_bak', False)
+        parsed_args.no_backup = getattr(parsed_args, 'no_backup', settings.no_backup)
+        parsed_args.quality = getattr(parsed_args, 'quality', "default")
         parsed_args.mupdf_aggression = getattr(
-            parsed_args, 'mupdf_aggression', settings.processing.mupdf_aggression
+            parsed_args, 'mupdf_aggression', "gg"
         )
-        parsed_args.min_size = getattr(parsed_args, 'min_size', settings.processing.min_size_mb)
+        parsed_args.min_size = getattr(parsed_args, 'min_size', 0)
         parsed_args.preserve_signature = getattr(
-            parsed_args, 'preserve_signature', settings.processing.preserve_signature
+            parsed_args, 'preserve_signature', False
         )
         
         # Вывод предупреждений

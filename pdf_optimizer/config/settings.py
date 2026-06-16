@@ -51,6 +51,9 @@ class AppSettings(BaseSettings):
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     no_backup: bool = False  # SAFE DEFAULT: Для сервера бэкапы ВКЛЮЧЕНЫ
     backup_retention_days: int = 30
+    
+    # Rate limiting (защита от DDoS и злоупотреблений)
+    rate_limit: int = Field(default=60, description="Количество запросов в минуту на один IP")
 
     # Системные бинарники
     ghostscript_path: str = "gs"

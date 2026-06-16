@@ -1,28 +1,22 @@
 """PDF Optimizer Core Package"""
 
 from .processor import (
-    ProcessingMode,
-    ValidationResult,
-    validate_pdf,
-    get_pdf_files,
-    clean_with_pikepdf,
-    rebuild_with_mupdf,
-    cleanup_temp_files,
-    verify_pdf_integrity,
-    process_file
+    PDFProcessor,
+    ProcessItem,
+    ProcessResult,
+    get_pdf_files
 )
 
 from .multiprocessing import (
-    ProcessResult,
     ParallelProcessor,
-    get_optimal_worker_count,
-    _process_single_file
+    get_optimal_worker_count
 )
 
 __all__ = [
-    'get_pdf_files',
+    'PDFProcessor',
+    'ProcessItem',
     'ProcessResult',
+    'get_pdf_files',
     'ParallelProcessor',
-    'get_optimal_worker_count',
-    '_process_single_file'
+    'get_optimal_worker_count'
 ]

@@ -13,7 +13,7 @@ from multiprocessing import Pool, cpu_count
 from functools import partial
 from dataclasses import dataclass
 
-from .processor import process_file
+from .processor import PDFProcessor, ProcessItem, ProcessResult as ProcessorResult
 
 
 @dataclass
@@ -40,58 +40,40 @@ class ProcessResult:
         return self.new_size / 1024 / 1024
 
 
-def _process_single_file(args: Tuple[Path, str, str, Path, bool, bool, str, bool]) -> ProcessResult:
+def _process_single_file(args: Tuple[Path, str, str]) -> ProcessResult:
     """
     Обработка одного файла (wrapper для multiprocessing)
     
     Args:
-        args: Кортеж параметров (file_path, mode, mupdf_aggression, temp_dir, 
-              preserve_signature, no_backup, temp_prefix, keep_bak)
-              
+        args: Кортеж параметров (file_path, quality, aggression)
+        
     Returns:
         ProcessResult с результатами обработки
     """
-    file_path, mode, mupdf_aggression, temp_dir, preserve_signature, no_backup, temp_prefix, keep_bak = args
+    file_path, quality, aggression = args
     
     logger = logging.getLogger(__name__)
     
     try:
-        original_size = file_path.stat().st_size
+        processor = PDFProcessor()
+        item = ProcessItem(pdf_path=file_path, quality=quality, aggression=aggression)
+        result = processor.process_file(item)
         
-        success = process_file(
-            file_path=file_path,
-            mode=mode,
-            mupdf_aggression=mupdf_aggression,
-            temp_dir=temp_dir,
-            preserve_signature=preserve_signature,
-            no_backup=no_backup,
-            temp_prefix=temp_prefix,
-            keep_bak=keep_bak
+        return ProcessResult(
+            file_path=result.original_path,
+            success=result.success,
+            original_size=result.original_size,
+            new_size=result.final_size,
+            error_message=result.error_message or ""
         )
-        
-        if success:
-            new_size = file_path.stat().st_size
-            return ProcessResult(
-                file_path=file_path,
-                success=True,
-                original_size=original_size,
-                new_size=new_size
-            )
-        else:
-            return ProcessResult(
-                file_path=file_path,
-                success=False,
-                original_size=original_size,
-                new_size=0,
-                error_message="Processing failed"
-            )
             
     except Exception as e:
         logger.error(f"Error processing {file_path.name}: {e}")
+        original_size = file_path.stat().st_size if file_path.exists() else 0
         return ProcessResult(
             file_path=file_path,
             success=False,
-            original_size=file_path.stat().st_size if file_path.exists() else 0,
+            original_size=original_size,
             new_size=0,
             error_message=str(e)
         )
@@ -102,51 +84,44 @@ class ParallelProcessor:
     Класс для параллельной обработки PDF файлов
     """
     
-    def __init__(self, max_workers: Optional[int] = None):
+    def __init__(self, max_workers: Optional[int] = None, quality: str = "default", aggression: str = "gg"):
         """
         Инициализация параллельного процессора
         
         Args:
             max_workers: Максимальное количество процессов (по умолчанию = число CPU)
+            quality: Качество обработки
+            aggression: Уровень агрессии MuPDF
         """
         self.max_workers = max_workers or cpu_count()
+        self.quality = quality
+        self.aggression = aggression
         self.logger = logging.getLogger(__name__)
         
     def process_files(self, 
                       files: List[Path],
-                      mode: str,
-                      mupdf_aggression: str,
-                      temp_dir: Path,
-                      preserve_signature: bool = False,
-                      no_backup: bool = False,
-                      temp_prefix: str = "pdf_opt_",
-                      keep_bak: bool = False,
-                      progress_callback: Optional[callable] = None) -> List[ProcessResult]:
+                      quality: Optional[str] = None,
+                      aggression: Optional[str] = None) -> List[ProcessResult]:
         """
         Параллельная обработка списка файлов
         
         Args:
             files: Список путей к файлам
-            mode: Режим обработки (fast/better/best)
-            mupdf_aggression: Уровень сжатия MuPDF
-            temp_dir: Директория для временных файлов
-            preserve_signature: Сохранять ли электронные подписи
-            no_backup: Не создавать бэкапы
-            temp_prefix: Префикс временных файлов
-            keep_bak: Сохранять ли .bak файлы после обработки
-            progress_callback: Callback функция для отображения прогресса
+            quality: Режим обработки (fast/default/archive/maximum)
+            aggression: Уровень сжатия MuPDF (g/gg/ggg/gggg)
             
         Returns:
             Список ProcessResult с результатами обработки
         """
+        quality = quality or self.quality
+        aggression = aggression or self.aggression
+        
         self.logger.info(f"Запуск параллельной обработки {len(files)} файлов")
         self.logger.info(f"Количество процессов: {self.max_workers}")
         
         # Подготовка аргументов для каждого файла
-        # Примечание: каждый процесс будет иметь свой temp_dir
         args_list = [
-            (file_path, mode, mupdf_aggression, temp_dir, 
-             preserve_signature, no_backup, temp_prefix, keep_bak)
+            (file_path, quality, aggression)
             for file_path in files
         ]
         
@@ -156,78 +131,43 @@ class ParallelProcessor:
             # Используем imap_unordered для лучшей производительности
             for result in pool.imap_unordered(_process_single_file, args_list, chunksize=4):
                 results.append(result)
-                
-                if progress_callback:
-                    progress_callback(result)
         
         return results
     
     def process_files_sequential(self,
                                   files: List[Path],
-                                  mode: str,
-                                  mupdf_aggression: str,
-                                  temp_dir: Path,
-                                  preserve_signature: bool = False,
-                                  no_backup: bool = False,
-                                  temp_prefix: str = "pdf_opt_",
-                                  keep_bak: bool = False,
-                                  progress_callback: Optional[callable] = None) -> List[ProcessResult]:
+                                  quality: Optional[str] = None,
+                                  aggression: Optional[str] = None) -> List[ProcessResult]:
         """
         Последовательная обработка файлов (для отладки или когда multiprocessing недоступен)
         
         Args:
             files: Список путей к файлам
-            mode: Режим обработки
-            mupdf_aggression: Уровень сжатия MuPDF
-            temp_dir: Директория для временных файлов
-            preserve_signature: Сохранять ли электронные подписи
-            no_backup: Не создавать бэкапы
-            temp_prefix: Префикс временных файлов
-            keep_bak: Сохранять ли .bak файлы после обработки
-            progress_callback: Callback функция для отображения прогресса
+            quality: Режим обработки
+            aggression: Уровень сжатия MuPDF
             
         Returns:
             Список ProcessResult с результатами обработки
         """
+        quality = quality or self.quality
+        aggression = aggression or self.aggression
+        
         self.logger.info(f"Запуск последовательной обработки {len(files)} файлов")
         
+        processor = PDFProcessor()
         results = []
         
         for file_path in files:
-            original_size = file_path.stat().st_size
+            item = ProcessItem(pdf_path=file_path, quality=quality, aggression=aggression)
+            result = processor.process_file(item)
             
-            success = process_file(
-                file_path=file_path,
-                mode=mode,
-                mupdf_aggression=mupdf_aggression,
-                temp_dir=temp_dir,
-                preserve_signature=preserve_signature,
-                no_backup=no_backup,
-                temp_prefix=temp_prefix,
-                keep_bak=keep_bak
-            )
-            
-            if success:
-                new_size = file_path.stat().st_size
-                result = ProcessResult(
-                    file_path=file_path,
-                    success=True,
-                    original_size=original_size,
-                    new_size=new_size
-                )
-            else:
-                result = ProcessResult(
-                    file_path=file_path,
-                    success=False,
-                    original_size=original_size,
-                    new_size=0,
-                    error_message="Processing failed"
-                )
-            
-            results.append(result)
-            
-            if progress_callback:
-                progress_callback(result)
+            results.append(ProcessResult(
+                file_path=result.original_path,
+                success=result.success,
+                original_size=result.original_size,
+                new_size=result.final_size,
+                error_message=result.error_message or ""
+            ))
         
         return results
 

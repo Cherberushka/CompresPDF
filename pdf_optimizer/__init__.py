@@ -8,18 +8,28 @@ Version: 15.0.0
 """
 
 from .config.settings import (
+    ProcessingConfig,
+    PathsConfig,
+    DisplayConfig,
     AppSettings,
-    settings
+    ConfigManager,
+    config_manager
 )
 
 from .core.processor import (
-    PDFProcessor,
-    ProcessItem,
-    ProcessResult,
-    get_pdf_files
+    ProcessingMode,
+    ValidationResult,
+    validate_pdf,
+    get_pdf_files,
+    clean_with_pikepdf,
+    rebuild_with_mupdf,
+    cleanup_temp_files,
+    verify_pdf_integrity,
+    process_file
 )
 
 from .core.multiprocessing import (
+    ProcessResult,
     ParallelProcessor,
     get_optimal_worker_count
 )
@@ -37,16 +47,26 @@ __version__ = "15.0.0"
 __author__ = "Senior Python Developer"
 __all__ = [
     # Config
+    'ProcessingConfig',
+    'PathsConfig',
+    'DisplayConfig',
     'AppSettings',
-    'settings',
+    'ConfigManager',
+    'config_manager',
     
     # Core
-    'PDFProcessor',
-    'ProcessItem',
-    'ProcessResult',
+    'ProcessingMode',
+    'ValidationResult',
+    'validate_pdf',
     'get_pdf_files',
+    'clean_with_pikepdf',
+    'rebuild_with_mupdf',
+    'cleanup_temp_files',
+    'verify_pdf_integrity',
+    'process_file',
     
     # Multiprocessing
+    'ProcessResult',
     'ParallelProcessor',
     'get_optimal_worker_count',
     

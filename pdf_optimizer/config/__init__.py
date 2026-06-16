@@ -1,19 +1,19 @@
 """PDF Optimizer Configuration Package"""
 
 from .settings import (
+    ProcessingConfig,
+    PathsConfig,
+    DisplayConfig,
     AppSettings,
-    settings,
-    load_yaml_config,
-    SchedulerJobConfig,
-    SchedulerConfig,
-    ApiConfig
+    ConfigManager,
+    config_manager
 )
 
 __all__ = [
+    'ProcessingConfig',
+    'PathsConfig',
+    'DisplayConfig',
     'AppSettings',
-    'settings',
-    'load_yaml_config',
-    'SchedulerJobConfig',
-    'SchedulerConfig',
-    'ApiConfig'
+    'ConfigManager',
+    'config_manager'
 ]

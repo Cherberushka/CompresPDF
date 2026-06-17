@@ -1,9 +1,21 @@
+import logging
 import os
+import sys
 from pathlib import Path
 from typing import List, Literal, Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import BaseModel, Field, field_validator
 
+# Перенаправляем логи исключительно в stdout для правильной работы в Docker
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+
+logger = logging.getLogger(__name__)
 
 class SchedulerJobConfig(BaseModel):
     name: str = "default_job"

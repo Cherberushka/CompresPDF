@@ -26,4 +26,4 @@ RUN mkdir -p /data /var/log/pdf-optimizer
 EXPOSE 8080
 
 # Запускаем FastAPI через uvicorn
-CMD ["uvicorn", "pdf_optimizer.api.app:app", "--host", "0.0.0.0", "--port", "8080"]
+CMD ["uvicorn", "pdf_optimizer.api.app:app", "--host", "0.0.0.0", "--port", "8080", "--workers", "1"]

@@ -11,21 +11,21 @@ backup_retention_days: 14
 
 scheduler:
   jobs:
-    - name: "daily_inbox_compression"
+    - name: "daily_inbox"
       # Синтаксис cron: запускать каждый день в 02:00 ночи
       cron: "0 2 * * *"
       # Обрабатывать только файлы, измененные за последние 24 часа
       since: "24h"
       # Путь внутри Docker-контейнера (соответствует volume ./data:/data)
       root_dir: "/data/inbox"
-      quality: "default"
-      aggression: "gg"
+      quality: "best"
+      aggression: "gggg"
 
-    - name: "hourly_urgent_compression"
+    - name: "hourly_urgent"
       # Синтаксис cron: каждую 15-ю минуту часа
       cron: "15 * * * *"
       # Берем только совсем свежие файлы
       since: "2h"
       root_dir: "/data/urgent"
-      quality: "fast"
-      aggression: "g"
+      quality: "best"
+      aggression: "best"

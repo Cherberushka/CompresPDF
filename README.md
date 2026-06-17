@@ -97,6 +97,12 @@ python -m pdf_optimizer "C:\Documents" --preserve-signature
 
 # Простой текстовый вывод (без Rich)
 python -m pdf_optimizer "C:\Documents" --no-rich
+
+# Файлы за декабрь 2016
+python main.py "C:\Documents" --year 2016 --month 12
+
+# Файлы за 2018 год
+python main.py "C:\Documents" --year 2018
 ```
 
 ### Работа с конфигурацией
@@ -231,9 +237,7 @@ MIT License — см. файл [LICENSE](LICENSE) для деталей.
 ## 👨‍💻 Автор
 
 Senior Python Developer  
-Version 15.0.0 (Multiprocessing Edition)  
+Version 0.0.15 (Multiprocessing Edition)  
 Дата: 2026-03-27
 
 ---
-
-**Предыдущие версии**: v14.1 (Fixed no-backup), v14.0, v13.x

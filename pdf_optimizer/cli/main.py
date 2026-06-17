@@ -8,6 +8,8 @@ PDF Optimizer CLI Module
 import sys
 import argparse
 import logging
+import json
+import multiprocessing
 from pathlib import Path
 from typing import Optional
 from datetime import datetime
@@ -18,6 +20,7 @@ try:
     from rich.table import Table
     from rich.panel import Panel
     from rich import box
+
     RICH_AVAILABLE = True
 except ImportError:
     RICH_AVAILABLE = False
@@ -30,13 +33,21 @@ from ..core.multiprocessing import ParallelProcessor, ProcessResult, get_optimal
 
 class PDFOptimizerCLI:
     """Класс для управления консольным интерфейсом"""
-    
+
     def __init__(self, use_rich: bool = True):
+        # Фикс для корректного вывода Unicode (эмодзи) в консоли Windows
+        if sys.platform == 'win32':
+            try:
+                sys.stdout.reconfigure(encoding='utf-8')
+                sys.stderr.reconfigure(encoding='utf-8')
+            except Exception:
+                pass
+
         self.use_rich = use_rich and RICH_AVAILABLE
         self.console = Console() if self.use_rich else None
         self.config_manager = ConfigManager()
         self.logger = logging.getLogger(__name__)
-        
+
     def print_banner(self) -> None:
         """Вывод заголовка программы"""
         if self.use_rich:
@@ -50,46 +61,46 @@ class PDFOptimizerCLI:
             print("\n" + "=" * 70)
             print("PDF OPTIMIZER v15.0 - MULTIPROCESSING EDITION")
             print("=" * 70)
-    
+
     def print_system_info(self) -> None:
         """Вывод информации о системе"""
         import sys
-        
+
         if self.use_rich:
             from rich.tree import Tree
-            
+
             tree = Tree("📊 [bold]System Information[/bold]")
             tree.add(f"Python: [green]{sys.version.split()[0]}[/green]")
             tree.add(f"Executable: [cyan]{sys.executable}[/cyan]")
-            
+
             try:
                 import pikepdf
                 tree.add(f"pikepdf: [green]v{pikepdf.__version__}[/green]")
             except ImportError:
                 tree.add("pikepdf: [red]NOT INSTALLED[/red]")
-            
+
             # Проверка MuPDF
             import subprocess
             try:
-                subprocess.run(["mutool", "-version"], 
-                             stdout=subprocess.DEVNULL, 
-                             stderr=subprocess.DEVNULL, 
-                             check=True)
+                subprocess.run(["mutool", "-version"],
+                               stdout=subprocess.DEVNULL,
+                               stderr=subprocess.DEVNULL,
+                               check=True)
                 tree.add("MuPDF: [green]FOUND[/green]")
             except:
                 tree.add("MuPDF: [yellow]NOT FOUND[/yellow]")
-            
+
             self.console.print(tree)
         else:
             print(f"Python: {sys.version.split()[0]}")
             print(f"Executable: {sys.executable}")
-            
+
             try:
                 import pikepdf
                 print(f"pikepdf: v{pikepdf.__version__}")
             except ImportError:
                 print("pikepdf: NOT INSTALLED")
-    
+
     def print_warnings(self, no_backup: bool, preserve_signature: bool) -> None:
         """Вывод предупреждений"""
         if not preserve_signature:
@@ -106,7 +117,7 @@ class PDFOptimizerCLI:
                 print("⚠️  ВНИМАНИЕ: ЭЛЕКТРОННАЯ ПОДПИСЬ БУДЕТ УДАЛЕНА")
                 print("   Оптимизированные файлы НЕ ИМЕЮТ юридической силы")
                 print("=" * 70)
-        
+
         if no_backup:
             if self.use_rich:
                 self.console.print(Panel(
@@ -120,7 +131,7 @@ class PDFOptimizerCLI:
                 print("⚠️  ВНИМАНИЕ: БЭКАПЫ ОТКЛЮЧЕНЫ (--no-backup)")
                 print("   Оригиналы файлов будут заменены без возможности отката")
                 print("=" * 70)
-    
+
     def create_progress(self) -> Optional[Progress]:
         """Создание индикатора прогресса"""
         if self.use_rich:
@@ -133,35 +144,35 @@ class PDFOptimizerCLI:
                 expand=True
             )
         return None
-    
+
     def print_summary_table(self, results: list, elapsed_time: float) -> None:
         """Вывод итоговой таблицы результатов"""
         total = len(results)
         success = sum(1 for r in results if r.success)
         failed = total - success
-        
+
         total_original = sum(r.original_size for r in results)
         total_new = sum(r.new_size for r in results if r.success)
-        
+
         if self.use_rich:
             table = Table(title="📈 Processing Summary", box=box.ROUNDED)
-            
+
             table.add_column("Metric", style="cyan")
             table.add_column("Value", style="green")
-            
+
             table.add_row("Total Files", str(total))
             table.add_row("Successful", f"[green]{success}[/green]")
             table.add_row("Failed", f"[red]{failed}[/red]" if failed > 0 else str(failed))
-            table.add_row("Success Rate", f"{(success/total*100):.1f}%")
-            table.add_row("Time Elapsed", f"{elapsed_time:.1f}s ({elapsed_time/60:.1f} min)")
-            
+            table.add_row("Success Rate", f"{(success / total * 100):.1f}%")
+            table.add_row("Time Elapsed", f"{elapsed_time:.1f}s ({elapsed_time / 60:.1f} min)")
+
             if total_original > 0:
                 reduction = ((total_original - total_new) / total_original) * 100
-                table.add_row("Original Size", f"{total_original/1024/1024:.2f} MB")
-                table.add_row("New Size", f"{total_new/1024/1024:.2f} MB")
+                table.add_row("Original Size", f"{total_original / 1024 / 1024:.2f} MB")
+                table.add_row("New Size", f"{total_new / 1024 / 1024:.2f} MB")
                 table.add_row("Reduction", f"[green]-{reduction:.1f}%[/green]")
-                table.add_row("Space Saved", f"[green]{(total_original-total_new)/1024/1024:.2f} MB[/green]")
-            
+                table.add_row("Space Saved", f"[green]{(total_original - total_new) / 1024 / 1024:.2f} MB[/green]")
+
             self.console.print(table)
         else:
             print("\n" + "=" * 70)
@@ -170,41 +181,127 @@ class PDFOptimizerCLI:
             print(f"Total Files: {total}")
             print(f"Successful: {success}")
             print(f"Failed: {failed}")
-            print(f"Success Rate: {(success/total*100):.1f}%")
-            print(f"Time Elapsed: {elapsed_time:.1f}s ({elapsed_time/60:.1f} min)")
-            
+            print(f"Success Rate: {(success / total * 100):.1f}%")
+            print(f"Time Elapsed: {elapsed_time:.1f}s ({elapsed_time / 60:.1f} min)")
+
             if total_original > 0:
                 reduction = ((total_original - total_new) / total_original) * 100
-                print(f"Original Size: {total_original/1024/1024:.2f} MB")
-                print(f"New Size: {total_new/1024/1024:.2f} MB")
+                print(f"Original Size: {total_original / 1024 / 1024:.2f} MB")
+                print(f"New Size: {total_new / 1024 / 1024:.2f} MB")
                 print(f"Reduction: -{reduction:.1f}%")
-                print(f"Space Saved: {(total_original-total_new)/1024/1024:.2f} MB")
-    
+                print(f"Space Saved: {(total_original - total_new) / 1024 / 1024:.2f} MB")
+
+    def save_statistics(self, results: list, elapsed_time: float) -> None:
+        """Сохранение итоговой статистики в JSON файл с обновлением (накоплением) данных
+           в директории исполняемого файла (exe) или скрипта.
+        """
+        total = len(results)
+        if total == 0:
+            return
+
+        success = sum(1 for r in results if r.success)
+        failed = total - success
+
+        total_original = sum(r.original_size for r in results)
+        total_new = sum(r.new_size for r in results if r.success)
+
+        current_time = datetime.now()
+
+        stats = {
+            "timestamp": current_time.isoformat(),
+            "metrics": {
+                "total_files": total,
+                "successful": success,
+                "failed": failed,
+                "success_rate_percent": round((success / total * 100), 1) if total > 0 else 0,
+                "time_elapsed_seconds": round(elapsed_time, 1)
+            },
+            "storage": {
+                "original_size_mb": round(total_original / 1024 / 1024, 2),
+                "new_size_mb": round(total_new / 1024 / 1024, 2),
+                "space_saved_mb": round((total_original - total_new) / 1024 / 1024, 2) if total_original > 0 else 0,
+                "reduction_percent": round(((total_original - total_new) / total_original) * 100,
+                                           1) if total_original > 0 else 0
+            }
+        }
+
+        # Определяем директорию исполняемого файла
+        if getattr(sys, 'frozen', False):
+            # Если запущено как скомпилированный exe
+            app_dir = Path(sys.executable).parent
+        else:
+            # Если запущено как обычный python скрипт
+            app_dir = Path(__file__).resolve().parent.parent.parent
+
+        stats_file = app_dir / "optimization_stats.json"
+
+        try:
+            # Чтение и обновление существующего файла
+            existing_data = []
+            if stats_file.exists():
+                with open(stats_file, 'r', encoding='utf-8') as f:
+                    try:
+                        existing_data = json.load(f)
+                        # Обратная совместимость: если старый файл содержал словарь, превращаем в список
+                        if not isinstance(existing_data, list):
+                            existing_data = [existing_data]
+                    except json.JSONDecodeError:
+                        # В случае повреждения старого файла, делаем бэкап и создаем новый список
+                        backup_file = app_dir / f"optimization_stats_backup_{current_time.strftime('%Y%m%d_%H%M%S')}.json"
+                        stats_file.rename(backup_file)
+                        self.logger.warning(f"Старый файл статистики был поврежден. Создан бэкап: {backup_file}")
+                        existing_data = []
+
+            # Добавление новой записи в массив
+            existing_data.append(stats)
+
+            with open(stats_file, 'w', encoding='utf-8') as f:
+                json.dump(existing_data, f, indent=4, ensure_ascii=False)
+
+            if self.use_rich and self.console:
+                self.console.print(f"[dim]Статистика обновлена в: {stats_file}[/dim]")
+            else:
+                print(f"Статистика обновлена в: {stats_file}")
+
+        except Exception as e:
+            self.logger.error(f"Не удалось обновить статистический файл: {e}")
+            # Фолбэк-механизм: если блокировка или ошибка, создаем файл с пометкой времени
+            fallback_file = app_dir / f"optimization_stats_{current_time.strftime('%Y%m%d_%H%M%S')}.json"
+            try:
+                with open(fallback_file, 'w', encoding='utf-8') as f:
+                    json.dump([stats], f, indent=4, ensure_ascii=False)
+                if self.use_rich and self.console:
+                    self.console.print(f"[dim]Статистика сохранена в резервный файл: {fallback_file}[/dim]")
+                else:
+                    print(f"Статистика сохранена в резервный файл: {fallback_file}")
+            except Exception as e2:
+                self.logger.error(f"Критическая ошибка сохранения резервной статистики: {e2}")
+
     def print_dry_run(self, files: list) -> None:
         """Вывод результатов dry-run"""
         total_size = sum(f.stat().st_size for f in files)
-        
+
         if self.use_rich:
             self.console.print(Panel(
                 f"[bold]DRY RUN MODE[/bold]\n"
                 f"Files to process: {len(files)}\n"
-                f"Total size: {total_size/1024/1024:.2f} MB",
+                f"Total size: {total_size / 1024 / 1024:.2f} MB",
                 title="ℹ️  INFO",
                 border_style="cyan"
             ))
-            
+
             if files:
                 table = Table(title="Files to Process (first 10)", show_header=True)
                 table.add_column("#", style="dim")
                 table.add_column("Filename", style="cyan")
                 table.add_column("Size (MB)", justify="right")
-                
+
                 for i, f in enumerate(files[:10], 1):
                     size_mb = f.stat().st_size / 1024 / 1024
                     table.add_row(str(i), f.name, f"{size_mb:.2f}")
-                
+
                 self.console.print(table)
-                
+
                 if len(files) > 10:
                     self.console.print(f"[dim]... and {len(files) - 10} more files[/dim]")
         else:
@@ -217,7 +314,7 @@ class PDFOptimizerCLI:
                 print(f"  {f.name} ({f.stat().st_size / 1024 / 1024:.2f} МБ)")
             if len(files) > 10:
                 print(f"  ... и ещё {len(files) - 10} файлов")
-    
+
     def create_argument_parser(self) -> argparse.ArgumentParser:
         """Создание парсера аргументов командной строки"""
         parser = argparse.ArgumentParser(
@@ -230,7 +327,7 @@ class PDFOptimizerCLI:
   %(prog)s "C:\\Documents" --dry-run --min-size 0
   %(prog)s "C:\\Documents" --no-backup --no-rich
   %(prog)s "C:\\Documents" --preserve-signature --workers auto
-  
+
 Режимы качества:
   fast    - Только pikepdf (70-80%% сжатие, ~1 сек/файл)
   better  - pikepdf + MuPDF (80-90%% сжатие, ~2-3 сек/файл)
@@ -243,37 +340,37 @@ class PDFOptimizerCLI:
   gggg    - Максимальная сборка мусора
             """
         )
-        
+
         parser.add_argument("path", help="Путь к корневой директории")
         parser.add_argument("--dry-run", action="store_true",
-                          help="Только список файлов без обработки")
+                            help="Только список файлов без обработки")
         parser.add_argument("--min-size", type=int, default=0,
-                          help="Мин размер в МБ (по умолчанию 0)")
+                            help="Мин размер в МБ (по умолчанию 0)")
         parser.add_argument("--keep-bak", action="store_true",
-                          help="Не удалять .bak файлы (хранить 90 дней)")
+                            help="Не удалять .bak файлы (хранить 90 дней)")
         parser.add_argument("--quality", type=str, default="fast",
-                          choices=["fast", "better", "best"],
-                          help="Режим обработки (fast/better/best)")
+                            choices=["fast", "better", "best"],
+                            help="Режим обработки (fast/better/best)")
         parser.add_argument("--mupdf-aggression", type=str, default="gggg",
-                          choices=["g", "gg", "ggg", "gggg"],
-                          help="Уровень сборки мусора MuPDF")
+                            choices=["g", "gg", "ggg", "gggg"],
+                            help="Уровень сборки мусора MuPDF")
         parser.add_argument("--preserve-signature", action="store_true",
-                          help="Не удалять электронные подписи")
+                            help="Не удалять электронные подписи")
         parser.add_argument("--no-backup", action="store_true",
-                          help="Не создавать .bak файлы")
+                            help="Не создавать .bak файлы")
         parser.add_argument("--workers", type=str, default="auto",
-                          help="Количество процессов (auto/N, по умолчанию auto)")
+                            help="Количество процессов (auto/N, по умолчанию auto)")
         parser.add_argument("--no-rich", action="store_true",
-                          help="Отключить красивый вывод (использовать простой текст)")
+                            help="Отключить красивый вывод (использовать простой текст)")
         parser.add_argument("--verbose", "-v", action="store_true",
-                          help="Подробный вывод")
+                            help="Подробный вывод")
         parser.add_argument("--config", type=Path,
-                          help="Путь к файлу конфигурации JSON")
+                            help="Путь к файлу конфигурации JSON")
         parser.add_argument("--save-config", type=Path,
-                          help="Сохранить текущие настройки в файл")
-        
+                            help="Сохранить текущие настройки в файл")
+
         return parser
-    
+
     def parse_workers(self, workers_str: str) -> int:
         """Парсинг количества рабочих процессов"""
         if workers_str.lower() == "auto":
@@ -283,29 +380,32 @@ class PDFOptimizerCLI:
             return max(1, min(n, get_optimal_worker_count() * 2))
         except ValueError:
             return get_optimal_worker_count()
-    
+
     def run(self, args: Optional[list] = None) -> int:
         """
         Запуск приложения
-        
+
         Args:
             args: Аргументы командной строки (по умолчанию sys.argv[1:])
-            
+
         Returns:
             Код возврата (0 = успех, 1 = ошибка)
         """
+        # ВАЖНО: Требуется для корректной работы multiprocessing в скомпилированном PyInstaller .exe на Windows
+        multiprocessing.freeze_support()
+
         parser = self.create_argument_parser()
         parsed_args = parser.parse_args(args)
-        
+
         # Переопределение use_rich если указан флаг --no-rich
         if parsed_args.no_rich:
             self.use_rich = False
             self.console = None
-        
+
         # Вывод заголовка
         self.print_banner()
         self.print_system_info()
-        
+
         # Загрузка конфигурации из файла если указано
         if parsed_args.config:
             try:
@@ -313,13 +413,13 @@ class PDFOptimizerCLI:
                 self.logger.info(f"Configuration loaded from {parsed_args.config}")
             except Exception as e:
                 self.logger.error(f"Failed to load config: {e}")
-        
+
         # Сохранение конфигурации если указано
         if parsed_args.save_config:
             self.config_manager.create_default_config(parsed_args.save_config)
             self.logger.info(f"Configuration saved to {parsed_args.save_config}")
             return 0
-        
+
         # Переопределение аргументов командной строки значениями из конфига
         # Если конфиг загружен, используем его значения для keep_bak и других параметров
         if parsed_args.config:
@@ -338,17 +438,17 @@ class PDFOptimizerCLI:
                 parsed_args.min_size = settings.processing.min_size_mb
             if parsed_args.preserve_signature is False:
                 parsed_args.preserve_signature = settings.processing.preserve_signature
-        
+
         # Вывод предупреждений
         self.print_warnings(parsed_args.no_backup, parsed_args.preserve_signature)
-        
+
         # Определение количества процессов
         num_workers = self.parse_workers(parsed_args.workers)
-        
+
         # Настройка путей
         root_path = Path(parsed_args.path).resolve()
         temp_dir = root_path / ".pdf_temp"
-        
+
         try:
             temp_dir.mkdir(exist_ok=True)
         except (PermissionError, OSError):
@@ -356,36 +456,36 @@ class PDFOptimizerCLI:
             temp_dir = Path(tempfile.gettempdir()) / "pdf_optimizer_temp"
             temp_dir.mkdir(exist_ok=True)
             self.logger.warning(f"Using system temp: {temp_dir}")
-        
+
         # Поиск файлов
         files = get_pdf_files(
-            str(root_path), 
+            str(root_path),
             parsed_args.min_size
         )
-        
+
         if not files:
             self.logger.info("Файлов для обработки не найдено.")
             return 0
-        
+
         # Dry run режим
         if parsed_args.dry_run:
             self.print_dry_run(files)
             return 0
-        
+
         # Обработка файлов
         processor = ParallelProcessor(max_workers=num_workers)
         results = []
-        
+
         import time
         start_time = time.time()
-        
+
         if self.use_rich:
             with self.create_progress() as progress:
                 task = progress.add_task(
                     f"[cyan]Processing {len(files)} files...",
                     total=len(files)
                 )
-                
+
                 def update_progress(result: ProcessResult):
                     progress.update(task, advance=1)
                     if result.success:
@@ -398,7 +498,7 @@ class PDFOptimizerCLI:
                         progress.console.print(
                             f"[red]✗[/red] {result.file_path.name}: {result.error_message}"
                         )
-                
+
                 results = processor.process_files(
                     files=files,
                     mode=parsed_args.quality,
@@ -411,7 +511,7 @@ class PDFOptimizerCLI:
                 )
         else:
             print(f"\nProcessing {len(files)} files with {num_workers} workers...")
-            
+
             def simple_progress(result: ProcessResult):
                 status = "✓" if result.success else "✗"
                 if result.success:
@@ -420,7 +520,7 @@ class PDFOptimizerCLI:
                           f"-{result.reduction_percent:.1f}%)")
                 else:
                     print(f"{status} {result.file_path.name}: {result.error_message}")
-            
+
             results = processor.process_files(
                 files=files,
                 mode=parsed_args.quality,
@@ -431,12 +531,15 @@ class PDFOptimizerCLI:
                 keep_bak=parsed_args.keep_bak,
                 progress_callback=simple_progress
             )
-        
+
         # Вывод итогов
         elapsed = time.time() - start_time
-        
+
         self.print_summary_table(results, elapsed)
-        
+
+        # Запись статистики рядом с .exe
+        self.save_statistics(results, elapsed)
+
         # Возврат кода ошибки если есть неудачные обработки
         failed = sum(1 for r in results if not r.success)
         return 1 if failed > 0 else 0

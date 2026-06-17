@@ -3,6 +3,7 @@
 """
 PDF Optimizer Core Module
 Основные функции обработки PDF файлов (включая фикс шрифтов)
+"""
 
 import os
 import shutil

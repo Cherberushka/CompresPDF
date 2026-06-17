@@ -122,7 +122,8 @@ class PDFProcessor:
                 f"-sOutputFile={str(gs_temp)}",
                 str(item.pdf_path)
             ]
-            subprocess.run(gs_cmd, check=True, capture_output=True)
+            # Добавлен параметр timeout для защиты от зависания процесса
+            subprocess.run(gs_cmd, check=True, capture_output=True, timeout=300)
 
             # ШАГ 2: pikepdf (Очистка метаданных, сборка мусора, линеаризация)
             with pikepdf.open(str(gs_temp)) as pdf:
@@ -141,7 +142,8 @@ class PDFProcessor:
                 str(pike_temp),
                 str(mu_temp)
             ]
-            subprocess.run(mu_cmd, check=True, capture_output=True)
+            # Добавлен параметр timeout для защиты от зависания процесса
+            subprocess.run(mu_cmd, check=True, capture_output=True, timeout=300)
 
             # Проверка результата
             if not mu_temp.exists() or mu_temp.stat().st_size == 0:
@@ -167,8 +169,13 @@ class PDFProcessor:
                 self.logger.info(f"Пропущено (файл не стал меньше): {item.pdf_path.name}")
                 return ProcessResult(True, item.pdf_path, original_size, original_size)
 
+        except subprocess.TimeoutExpired as e:
+            err_msg = f"Превышено время ожидания (таймаут 300с) при обработке"
+            self.logger.error(f"{err_msg} файла {item.pdf_path.name}")
+            return ProcessResult(False, item.pdf_path, original_size, 0, err_msg)
+
         except subprocess.CalledProcessError as e:
-            err_msg = f"Ошибка subprocess: {e.stderr.decode('utf-8', errors='ignore')}"
+            err_msg = f"Ошибка subprocess: {e.stderr.decode('utf-8', errors='ignore') if getattr(e, 'stderr', None) else str(e)}"
             self.logger.error(f"{err_msg} при обработке {item.pdf_path}")
             return ProcessResult(False, item.pdf_path, original_size, 0, err_msg)
 

@@ -8,6 +8,8 @@ from pdf_optimizer.core.processor import get_pdf_files
 from pdf_optimizer.core.filtering import filter_by_mtime
 from pdf_optimizer.config.settings import settings
 from pdf_optimizer.scheduler.schedule import reload_jobs
+from ..jobs import runner
+from ..registry.store import RegistryStore
 
 router = APIRouter()
 
@@ -58,7 +60,6 @@ async def create_job(request: Request, job_req: JobRequest, background_tasks: Ba
     )
     return {"message": "Задача успешно добавлена в фоновую очередь", "params": job_req.model_dump()}
 
-
 @router.get("/jobs")
 async def list_jobs(request: Request, limit: int = 20):
     """Возвращает историю последних задач аудита."""
@@ -71,6 +72,28 @@ async def list_jobs(request: Request, limit: int = 20):
         jobs = [dict(row) for row in cursor.fetchall()]
     return {"jobs": jobs}
 
+
+@router.post("/optimize")
+async def start_optimization(background_tasks: BackgroundTasks):
+    """
+    Запуск оптимизации без блокировки Event Loop'а FastAPI.
+    Задача передается в BackgroundTasks.
+    """
+    # Инициализируем хранилище (в реальном приложении лучше использовать Dependency Injection)
+    registry = RegistryStore(settings.db_path)
+    job_runner = runner.JobRunner(registry)
+
+    # Запускаем метод run_job класса JobRunner в фоновом режиме
+    # Передаем дефолтные параметры (их лучше брать из тела запроса)
+    background_tasks.add_task(
+        job_runner.run_job,
+        source="api",
+        root_dir=str(settings.data_dir),
+        since="24h",
+        quality="best",
+        aggression="ggg"
+    )
+    return {"status": "success", "message": "Оптимизация запущена в фоновом режиме."}
 
 @router.post("/scan", response_model=ScanResponse)
 async def scan_directory(request: Request, scan_req: ScanRequest):
